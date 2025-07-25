@@ -1,0 +1,46 @@
+---
+# System preparation tasks
+
+- name: Install required system packages
+  package:
+    name:
+      - git
+      - build-essential
+      - jq
+      - curl
+      - wget
+      - ca-certificates
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: yes
+
+- name: Create mitum group
+  group:
+    name: "{{ mitum_service_group }}"
+    state: present
+    system: yes
+
+- name: Create mitum user
+  user:
+    name: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    home: "{{ mitum_install_dir }}"
+    shell: /bin/bash
+    system: yes
+    create_home: yes
+
+- name: Create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0755'
+  loop:
+    - "{{ mitum_install_dir }}"
+    - "{{ mitum_config_dir }}"
+    - "{{ mitum_keys_dir }}"
+    - "{{ mitum_data_dir }}"
+    - "{{ mitum_log_dir }}"
+    - "{{ mitum_backup_dir }}"

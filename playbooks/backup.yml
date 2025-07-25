@@ -1,0 +1,224 @@
+---
+# Backup playbook for Mitum nodes
+
+- name: Backup Mitum nodes
+  hosts: "{{ target_nodes | default('mitum_nodes') }}"
+  gather_facts: yes
+  become: yes
+  vars:
+    backup_timestamp: "{{ ansible_date_time.epoch }}"
+    backup_dir: "{{ mitum_backup_dir }}/{{ backup_timestamp }}"
+    
+  tasks:
+    - name: Create backup directory
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0750'
+        
+    - name: Check service status
+      systemd:
+        name: "{{ mitum_service_name }}"
+      register: service_status
+      
+    - name: Create backup manifest
+      copy:
+        content: |
+          backup_timestamp: {{ backup_timestamp }}
+          backup_date: {{ ansible_date_time.iso8601 }}
+          hostname: {{ inventory_hostname }}
+          node_id: {{ mitum_node_id }}
+          service_status: {{ service_status.status.ActiveState }}
+          mitum_version: {{ mitum_version | default('unknown') }}
+          network_id: {{ mitum_network_id }}
+        dest: "{{ backup_dir }}/manifest.yml"
+        
+    - name: Stop service for consistent backup
+      systemd:
+        name: "{{ mitum_service_name }}"
+        state: stopped
+      when: 
+        - stop_service_for_backup | default(false)
+        - service_status.status.ActiveState == "active"
+      register: service_stopped
+      
+    - name: Backup configuration files
+      archive:
+        path:
+          - "{{ mitum_config_dir }}"
+          - "{{ mitum_keys_dir }}"
+        dest: "{{ backup_dir }}/config-backup.tar.gz"
+        format: gz
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0600'
+        
+    - name: Backup data directory
+      when: backup_data | default(true)
+      block:
+        - name: Calculate data directory size
+          command: du -sh {{ mitum_data_dir }}
+          register: data_size
+          changed_when: false
+          
+        - name: Display data size
+          debug:
+            msg: "Data directory size: {{ data_size.stdout }}"
+            
+        - name: Create data backup
+          archive:
+            path: "{{ mitum_data_dir }}"
+            dest: "{{ backup_dir }}/data-backup.tar.gz"
+            format: gz
+            owner: "{{ mitum_service_user }}"
+            group: "{{ mitum_service_group }}"
+            mode: '0600'
+          async: 3600
+          poll: 30
+          
+    - name: Backup MongoDB
+      when: 
+        - mitum_mongodb_enabled | default(true)
+        - backup_mongodb | default(true)
+      block:
+        - name: Create MongoDB backup directory
+          file:
+            path: "{{ backup_dir }}/mongodb-backup"
+            state: directory
+            owner: "{{ mitum_service_user }}"
+            group: "{{ mitum_service_group }}"
+            mode: '0750'
+            
+        - name: Dump MongoDB database
+          shell: |
+            {% if mitum_mongodb_auth_enabled %}
+            mongodump -u "{{ mitum_mongodb_user }}" -p "{{ mitum_mongodb_password }}" \
+              --authenticationDatabase {{ mitum_mongodb_database }} \
+              --db {{ mitum_mongodb_database }} \
+              --out {{ backup_dir }}/mongodb-backup
+            {% else %}
+            mongodump --db {{ mitum_mongodb_database }} \
+              --out {{ backup_dir }}/mongodb-backup
+            {% endif %}
+          become_user: "{{ mitum_service_user }}"
+          
+        - name: Compress MongoDB backup
+          archive:
+            path: "{{ backup_dir }}/mongodb-backup"
+            dest: "{{ backup_dir }}/mongodb-backup.tar.gz"
+            format: gz
+            remove: yes
+            owner: "{{ mitum_service_user }}"
+            group: "{{ mitum_service_group }}"
+            mode: '0600'
+            
+    - name: Backup logs
+      when: backup_logs | default(false)
+      archive:
+        path: "{{ mitum_log_dir }}"
+        dest: "{{ backup_dir }}/logs-backup.tar.gz"
+        format: gz
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0600'
+        
+    - name: Start service if it was stopped
+      systemd:
+        name: "{{ mitum_service_name }}"
+        state: started
+      when: service_stopped is changed
+      
+    - name: Create backup summary
+      shell: |
+        echo "=== Backup Summary ===" > {{ backup_dir }}/summary.txt
+        echo "Timestamp: {{ ansible_date_time.iso8601 }}" >> {{ backup_dir }}/summary.txt
+        echo "Node: {{ inventory_hostname }}" >> {{ backup_dir }}/summary.txt
+        echo "" >> {{ backup_dir }}/summary.txt
+        echo "Files backed up:" >> {{ backup_dir }}/summary.txt
+        ls -lh {{ backup_dir }}/*.tar.gz >> {{ backup_dir }}/summary.txt
+        echo "" >> {{ backup_dir }}/summary.txt
+        echo "Total size:" >> {{ backup_dir }}/summary.txt
+        du -sh {{ backup_dir }} >> {{ backup_dir }}/summary.txt
+      changed_when: false
+      
+    - name: Set backup permissions
+      file:
+        path: "{{ backup_dir }}"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0750'
+        recurse: yes
+        
+- name: Centralize backups
+  hosts: "{{ target_nodes | default('mitum_nodes') }}"
+  gather_facts: no
+  become: yes
+  serial: 1
+  when: centralize_backups | default(false)
+  tasks:
+    - name: Create central backup directory on bastion
+      file:
+        path: "/var/backups/mitum-central/{{ backup_timestamp }}"
+        state: directory
+        mode: '0750'
+      delegate_to: "{{ groups['bastion'][0] }}"
+      run_once: yes
+      
+    - name: Sync backup to bastion
+      synchronize:
+        src: "{{ backup_dir }}/"
+        dest: "/var/backups/mitum-central/{{ backup_timestamp }}/{{ inventory_hostname }}/"
+        mode: push
+        compress: yes
+      delegate_to: "{{ groups['bastion'][0] }}"
+      
+- name: Cleanup old backups
+  hosts: "{{ target_nodes | default('mitum_nodes') }}"
+  gather_facts: no
+  become: yes
+  when: cleanup_old_backups | default(true)
+  tasks:
+    - name: Find old backups
+      find:
+        paths: "{{ mitum_backup_dir }}"
+        age: "{{ mitum_backup_retention_days | default(7) }}d"
+        recurse: no
+        file_type: directory
+      register: old_backups
+      
+    - name: Remove old backups
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_backups.files }}"
+      when: old_backups.files | length > 0
+      
+    - name: Display cleanup summary
+      debug:
+        msg: "Removed {{ old_backups.files | length }} old backup(s)"
+        
+- name: Generate backup report
+  hosts: localhost
+  gather_facts: no
+  run_once: yes
+  tasks:
+    - name: Create backup report
+      template:
+        src: backup-report.j2
+        dest: "{{ playbook_dir }}/../reports/backup-{{ backup_timestamp }}.txt"
+      vars:
+        nodes_backed_up: "{{ groups[target_nodes | default('mitum_nodes')] }}"
+        
+    - name: Display backup summary
+      debug:
+        msg: |
+          Backup completed successfully!
+          
+          Timestamp: {{ backup_timestamp }}
+          Nodes backed up: {{ groups[target_nodes | default('mitum_nodes')] | length }}
+          Backup location: {{ mitum_backup_dir }}/{{ backup_timestamp }}
+          
+          To restore from this backup:
+          make restore BACKUP_TIMESTAMP={{ backup_timestamp }}

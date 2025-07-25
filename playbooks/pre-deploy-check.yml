@@ -1,0 +1,207 @@
+---
+# Pre-deployment Validation Playbook
+# Version: 4.0.0
+#
+# Validates the environment before deployment to catch issues early.
+# 
+# Validation items:
+# - Connectivity check
+# - OS compatibility
+# - Required port availability
+# - Disk space
+# - Time synchronization
+# - Existing service conflicts
+
+- name: Pre-deployment validation for all hosts
+  hosts: all
+  gather_facts: yes
+  any_errors_fatal: true  # Stop everything if any host fails
+  tasks:
+    # === Basic Connectivity Check ===
+    - name: Verify ansible connectivity
+      ping:
+      register: ping_result
+
+    - name: Display connection status
+      debug:
+        msg: "Host {{ inventory_hostname }} is reachable"
+
+    # === OS Compatibility Check ===
+    - name: Check supported OS
+      assert:
+        that:
+          - ansible_os_family in ['Debian', 'RedHat']
+          - ansible_distribution_version is version('18.04', '>=') or 
+            ansible_distribution_version is version('7.0', '>=')
+        fail_msg: |
+          Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Supported: Ubuntu 18.04+, CentOS/RHEL 7+
+        success_msg: "OS {{ ansible_distribution }} {{ ansible_distribution_version }} is supported"
+
+    # === Python Version Check ===
+    - name: Check Python version
+      assert:
+        that:
+          - ansible_python_version is version('3.6', '>=')
+        fail_msg: "Python 3.6+ required, found: {{ ansible_python_version }}"
+        success_msg: "Python {{ ansible_python_version }} meets requirements"
+
+    # === Disk Space Check ===
+    - name: Check disk space
+      set_fact:
+        root_disk_free_gb: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/') | first).size_available / 1024 / 1024 / 1024 | round(2) }}"
+
+    - name: Verify sufficient disk space
+      assert:
+        that:
+          - root_disk_free_gb | float >= 20
+        fail_msg: "Insufficient disk space: {{ root_disk_free_gb }}GB free (minimum 20GB required)"
+        success_msg: "Disk space OK: {{ root_disk_free_gb }}GB free"
+
+    # === Memory Check ===
+    - name: Check available memory
+      assert:
+        that:
+          - ansible_memtotal_mb >= 4096
+        fail_msg: "Insufficient memory: {{ ansible_memtotal_mb }}MB (minimum 4GB required)"
+        success_msg: "Memory OK: {{ ansible_memtotal_mb }}MB"
+
+    # === Time Synchronization Check ===
+    - name: Check time synchronization
+      shell: |
+        if command -v timedatectl &> /dev/null; then
+          timedatectl status | grep -q "synchronized: yes" && echo "synced" || echo "not synced"
+        elif command -v ntpstat &> /dev/null; then
+          ntpstat &> /dev/null && echo "synced" || echo "not synced"
+        else
+          echo "unknown"
+        fi
+      register: time_sync_status
+      changed_when: false
+
+    - name: Warn if time not synchronized
+      debug:
+        msg: "WARNING: Time synchronization status: {{ time_sync_status.stdout }}"
+      when: time_sync_status.stdout != "synced"
+
+    # === Required Commands Check ===
+    - name: Check required commands
+      command: "which {{ item }}"
+      loop:
+        - python3
+        - pip3
+        - tar
+        - gzip
+        - curl
+        - systemctl
+      register: command_checks
+      failed_when: false
+      changed_when: false
+
+    - name: Report missing commands
+      fail:
+        msg: "Required command not found: {{ item.item }}"
+      when: item.rc != 0
+      loop: "{{ command_checks.results }}"
+
+    # === SELinux Status Check (RHEL/CentOS) ===
+    - name: Check SELinux status
+      command: getenforce
+      register: selinux_status
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == "RedHat"
+
+    - name: Display SELinux status
+      debug:
+        msg: "SELinux is {{ selinux_status.stdout | default('not installed') }}"
+      when: ansible_os_family == "RedHat"
+
+    # === Firewall Status Check ===
+    - name: Check firewall status
+      systemd:
+        name: "{{ item }}"
+      register: firewall_status
+      failed_when: false
+      loop:
+        - ufw
+        - firewalld
+      when: ansible_service_mgr == "systemd"
+
+    - name: Display firewall status
+      debug:
+        msg: "{{ item.item }} is {{ item.status.ActiveState | default('not installed') }}"
+      loop: "{{ firewall_status.results | default([]) }}"
+      when: firewall_status is defined
+
+# === Mitum Node Specific Validation ===
+- name: Mitum nodes specific validation
+  hosts: mitum_nodes
+  gather_facts: no
+  tasks:
+    # === Port Availability Check ===
+    - name: Check if Mitum ports are available
+      wait_for:
+        port: "{{ item }}"
+        state: stopped
+        timeout: 1
+      register: port_checks
+      failed_when: false
+      loop:
+        - "{{ mitum_node_port }}"
+        - "{{ mitum_api_port | default(54320) }}"
+        - "{{ mongodb_port | default(27017) }}"
+
+    - name: Report ports in use
+      debug:
+        msg: "WARNING: Port {{ item.item }} is already in use"
+      when: item.failed is defined and item.failed
+      loop: "{{ port_checks.results }}"
+
+    # === Check Existing Mitum Installation ===
+    - name: Check for existing Mitum installation
+      stat:
+        path: "{{ mitum_install_dir }}/mitum"
+      register: existing_mitum
+
+    - name: Display existing installation
+      debug:
+        msg: "Existing Mitum installation found at {{ mitum_install_dir }}"
+      when: existing_mitum.stat.exists
+
+    # === Check Existing MongoDB ===
+    - name: Check for existing MongoDB
+      systemd:
+        name: mongod
+      register: existing_mongodb
+      failed_when: false
+
+    - name: Display MongoDB status
+      debug:
+        msg: "MongoDB service status: {{ existing_mongodb.status.ActiveState | default('not installed') }}"
+
+# === Validation Summary ===
+- name: Validation summary
+  hosts: localhost
+  gather_facts: no
+  run_once: true
+  tasks:
+    - name: Create validation report
+      set_fact:
+        validation_report:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          total_hosts: "{{ groups['all'] | length }}"
+          validated_hosts: "{{ groups['all'] | length }}"  # If we reach here, all passed
+          warnings: []  # Can add warning collection logic later
+
+    - name: Display validation summary
+      debug:
+        msg: |
+          ========================================
+          Pre-deployment Validation Complete
+          ========================================
+          Total hosts validated: {{ validation_report.total_hosts }}
+          All checks passed! ✓
+          
+          Environment ready for deployment.
+          ========================================

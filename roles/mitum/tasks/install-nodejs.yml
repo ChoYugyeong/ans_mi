@@ -1,0 +1,106 @@
+---
+# Install Node.js for MitumJS SDK
+
+- name: Check if Node.js is already installed
+  command: node --version
+  register: node_installed
+  failed_when: false
+  changed_when: false
+
+- name: Get installed Node.js version
+  set_fact:
+    installed_node_version: "{{ node_installed.stdout | regex_search('v([0-9]+)', '\\1') | first | default('0') }}"
+  when: node_installed.rc == 0
+
+- name: Determine if Node.js installation is needed
+  set_fact:
+    need_nodejs_install: >-
+      {{ node_installed.rc != 0 or 
+         (installed_node_version | int < mitum_nodejs_min_version | default(14) | int) }}
+
+- name: Install Node.js
+  when: need_nodejs_install
+  block:
+    - name: Install Node.js (Debian/Ubuntu)
+      when: ansible_os_family == "Debian"
+      block:
+        - name: Install Node.js prerequisites
+          apt:
+            name:
+              - ca-certificates
+              - curl
+              - gnupg
+            state: present
+            update_cache: yes
+
+        - name: Add NodeSource GPG key
+          apt_key:
+            url: https://deb.nodesource.com/gpgkey/nodesource.gpg.key
+            state: present
+
+        - name: Add NodeSource repository
+          apt_repository:
+            repo: "deb https://deb.nodesource.com/node_{{ mitum_nodejs_version | default('18') }}.x {{ ansible_distribution_release }} main"
+            state: present
+            update_cache: yes
+
+        - name: Install Node.js and npm
+          apt:
+            name:
+              - nodejs
+            state: present
+
+    - name: Install Node.js (RedHat/CentOS)
+      when: ansible_os_family == "RedHat"
+      block:
+        - name: Install Node.js repository
+          shell: |
+            curl -fsSL https://rpm.nodesource.com/setup_{{ mitum_nodejs_version | default('18') }}.x | bash -
+          args:
+            creates: /etc/yum.repos.d/nodesource-*.repo
+
+        - name: Install Node.js and npm
+          yum:
+            name:
+              - nodejs
+            state: present
+
+    - name: Install Node.js (Generic - using snap)
+      when: ansible_os_family not in ["Debian", "RedHat"]
+      block:
+        - name: Install snapd
+          package:
+            name: snapd
+            state: present
+
+        - name: Install Node.js via snap
+          snap:
+            name: node
+            classic: yes
+            channel: "{{ mitum_nodejs_version | default('18') }}/stable"
+
+- name: Verify Node.js installation
+  command: node --version
+  register: node_version_check
+  changed_when: false
+
+- name: Verify npm installation
+  command: npm --version
+  register: npm_version_check
+  changed_when: false
+
+- name: Display Node.js versions
+  debug:
+    msg: |
+      Node.js version: {{ node_version_check.stdout }}
+      npm version: {{ npm_version_check.stdout }}
+
+- name: Set npm registry (if configured)
+  command: npm config set registry {{ mitum_npm_registry }}
+  when: mitum_npm_registry is defined
+
+- name: Create npm global directory for system-wide packages
+  file:
+    path: /usr/local/lib/node_modules
+    state: directory
+    mode: '0755'

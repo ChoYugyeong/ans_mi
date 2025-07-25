@@ -1,0 +1,103 @@
+---
+# Key generation main tasks - supports multiple modes
+
+- name: Determine key generation strategy
+  set_fact:
+    keygen_strategy: "{{ mitum_keygen_strategy | default('centralized') }}"
+    # Options: centralized, distributed, external
+  tags:
+    - keygen
+
+- name: Display key generation strategy
+  debug:
+    msg: "Using {{ keygen_strategy }} key generation strategy"
+  tags:
+    - keygen
+
+# Centralized key generation (recommended for AWX)
+- name: Centralized key generation
+  when: keygen_strategy == 'centralized'
+  block:
+    - name: Generate all keys on controller
+      include_tasks: keygen-centralized.yml
+      run_once: true
+      delegate_to: localhost
+      tags:
+        - keygen
+        - keygen-centralized
+
+    - name: Distribute keys to nodes
+      include_tasks: keygen-distribute.yml
+      tags:
+        - keygen
+        - keygen-distribute
+
+# Distributed key generation (each node generates its own)
+- name: Distributed key generation
+  when: keygen_strategy == 'distributed'
+  include_tasks: keygen-distributed.yml
+  tags:
+    - keygen
+    - keygen-distributed
+
+# External key generation (keys provided via variables)
+- name: External key provisioning
+  when: keygen_strategy == 'external'
+  include_tasks: keygen-external.yml
+  tags:
+    - keygen
+    - keygen-external
+
+# Verify keys are available
+- name: Verify key availability
+  block:
+    - name: Check key file exists
+      stat:
+        path: "{{ mitum_keys_dir }}/node-{{ mitum_node_id }}.json"
+      register: key_file
+      
+    - name: Load node keys
+      set_fact:
+        node_keys: "{{ lookup('file', mitum_keys_dir + '/node-' + mitum_node_id|string + '.json') | from_json }}"
+      when: key_file.stat.exists
+      
+    - name: Set key facts
+      set_fact:
+        mitum_node_address: "{{ node_keys.address }}"
+        mitum_node_privatekey: "{{ node_keys.privatekey }}"
+        mitum_node_publickey: "{{ node_keys.publickey }}"
+        mitum_node_network_address: "{{ node_keys.network_address }}"
+        mitum_node_mitum_address: "{{ node_keys.mitum_address | default('') }}"
+      when: node_keys is defined
+      
+    - name: Validate keys
+      assert:
+        that:
+          - mitum_node_address is defined
+          - mitum_node_privatekey is defined
+          - mitum_node_publickey is defined
+          - mitum_node_network_address is defined
+        fail_msg: "Node keys are not properly configured"
+        success_msg: "Node keys validated successfully"
+  tags:
+    - keygen
+    - keygen-verify
+
+# Store keys in AWX for future use
+- name: Update AWX with node information
+  set_stats:
+    data:
+      mitum_nodes:
+        "{{ inventory_hostname }}":
+          node_id: "{{ mitum_node_id }}"
+          address: "{{ mitum_node_address }}"
+          publickey: "{{ mitum_node_publickey }}"
+          network_address: "{{ mitum_node_network_address }}"
+          mitum_address: "{{ mitum_node_mitum_address | default('') }}"
+          port: "{{ mitum_node_port }}"
+          api_enabled: "{{ mitum_api_enabled | default(false) }}"
+    aggregate: yes
+  when: awx_job_id is defined
+  tags:
+    - keygen
+    - awx-update

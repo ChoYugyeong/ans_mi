@@ -1,0 +1,180 @@
+{
+  "name": "Mitum Automated Recovery Workflow",
+  "description": "Automated recovery workflow triggered by monitoring alerts",
+  "organization": "Mitum Operations",
+  "inventory": "Mitum Production",
+  "limit": "",
+  "scm_branch": "",
+  "extra_vars": "",
+  "survey_enabled": false,
+  "allow_simultaneous": false,
+  "ask_variables_on_launch": true,
+  "ask_inventory_on_launch": false,
+  "ask_scm_branch_on_launch": false,
+  "ask_limit_on_launch": true,
+  "webhook_service": "prometheus",
+  "webhook_credential": "Prometheus Webhook Token",
+  "notification_templates_started": [
+    "Slack Recovery Started"
+  ],
+  "notification_templates_success": [
+    "Slack Recovery Success"
+  ],
+  "notification_templates_error": [
+    "Slack Recovery Failed",
+    "PagerDuty Alert"
+  ],
+  "notification_templates_approvals": [],
+  "workflow_nodes": [
+    {
+      "id": 1,
+      "unified_job_template": "Health Check",
+      "identifier": "health_check_initial",
+      "always_nodes": [],
+      "success_nodes": [2],
+      "failure_nodes": [3],
+      "extra_data": {
+        "limit": "{{ alert_node | default('all') }}"
+      },
+      "inventory": null,
+      "scm_branch": null,
+      "job_type": null,
+      "job_tags": null,
+      "skip_tags": null,
+      "all_parents_must_converge": false
+    },
+    {
+      "id": 2,
+      "unified_job_template": null,
+      "identifier": "recovery_not_needed",
+      "always_nodes": [],
+      "success_nodes": [],
+      "failure_nodes": [],
+      "extra_data": {},
+      "inventory": null,
+      "scm_branch": null,
+      "job_type": null,
+      "job_tags": null,
+      "skip_tags": null,
+      "all_parents_must_converge": false
+    },
+    {
+      "id": 3,
+      "unified_job_template": "Node Recovery",
+      "identifier": "recovery_simple",
+      "always_nodes": [],
+      "success_nodes": [4],
+      "failure_nodes": [5],
+      "extra_data": {
+        "recovery_action": "restart",
+        "target_nodes": "{{ alert_node }}",
+        "alert_severity": "{{ alert_severity | default('warning') }}"
+      },
+      "inventory": null,
+      "scm_branch": null,
+      "job_type": null,
+      "job_tags": null,
+      "skip_tags": null,
+      "all_parents_must_converge": false
+    },
+    {
+      "id": 4,
+      "unified_job_template": "Health Check",
+      "identifier": "health_check_verify",
+      "always_nodes": [],
+      "success_nodes": [6],
+      "failure_nodes": [5],
+      "extra_data": {
+        "limit": "{{ alert_node }}",
+        "validation_type": "post_recovery"
+      },
+      "inventory": null,
+      "scm_branch": null,
+      "job_type": null,
+      "job_tags": null,
+      "skip_tags": null,
+      "all_parents_must_converge": false
+    },
+    {
+      "id": 5,
+      "unified_job_template": "Node Recovery",
+      "identifier": "recovery_advanced",
+      "always_nodes": [],
+      "success_nodes": [7],
+      "failure_nodes": [8],
+      "extra_data": {
+        "recovery_action": "full",
+        "target_nodes": "{{ alert_node }}",
+        "include_resync": "true",
+        "backup_before_recovery": "true"
+      },
+      "inventory": null,
+      "scm_branch": null,
+      "job_type": null,
+      "job_tags": null,
+      "skip_tags": null,
+      "all_parents_must_converge": false
+    },
+    {
+      "id": 6,
+      "unified_job_template": null,
+      "identifier": "recovery_successful",
+      "always_nodes": [],
+      "success_nodes": [],
+      "failure_nodes": [],
+      "extra_data": {
+        "notification": "Recovery completed successfully"
+      },
+      "inventory": null,
+      "scm_branch": null,
+      "job_type": null,
+      "job_tags": null,
+      "skip_tags": null,
+      "all_parents_must_converge": false
+    },
+    {
+      "id": 7,
+      "unified_job_template": "Health Check",
+      "identifier": "health_check_final",
+      "always_nodes": [],
+      "success_nodes": [6],
+      "failure_nodes": [8],
+      "extra_data": {
+        "limit": "{{ alert_node }}",
+        "validation_type": "final"
+      },
+      "inventory": null,
+      "scm_branch": null,
+      "job_type": null,
+      "job_tags": null,
+      "skip_tags": null,
+      "all_parents_must_converge": false
+    },
+    {
+      "id": 8,
+      "unified_job_template": "Manual Intervention Required",
+      "identifier": "escalation",
+      "always_nodes": [],
+      "success_nodes": [],
+      "failure_nodes": [],
+      "extra_data": {
+        "create_incident": "true",
+        "incident_priority": "high",
+        "escalation_team": "infrastructure",
+        "include_diagnostics": "true"
+      },
+      "inventory": null,
+      "scm_branch": null,
+      "job_type": null,
+      "job_tags": null,
+      "skip_tags": null,
+      "all_parents_must_converge": false
+    }
+  ],
+  "labels": [
+    "automation",
+    "recovery",
+    "monitoring",
+    "workflow"
+  ]
+}

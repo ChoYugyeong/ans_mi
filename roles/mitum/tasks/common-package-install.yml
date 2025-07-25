@@ -1,0 +1,40 @@
+---
+# Common package installation tasks for different OS families
+# This reduces duplication across multiple playbooks
+
+- name: Install common packages based on OS
+  block:
+    - name: Install packages on Debian/Ubuntu
+      apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      
+    - name: Install packages on RHEL/CentOS
+      yum:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+      
+    - name: Install packages on macOS
+      homebrew:
+        name: "{{ packages }}"
+        state: present
+      when: ansible_os_family == "Darwin"
+      
+    - name: Install Python packages via pip
+      pip:
+        name: "{{ pip_packages | default([]) }}"
+        state: present
+      when: pip_packages is defined and pip_packages | length > 0
+  
+  rescue:
+    - name: Package installation failed
+      fail:
+        msg: |
+          Failed to install packages: {{ packages }}
+          OS Family: {{ ansible_os_family }}
+          Error: {{ ansible_failed_result.msg | default('Unknown error') }} 

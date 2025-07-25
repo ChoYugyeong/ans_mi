@@ -1,0 +1,155 @@
+{
+  "dashboard": {
+    "title": "Mitum Network Status - {{ mitum_network_id }}",
+    "uid": "mitum-{{ mitum_network_id }}",
+    "timezone": "browser",
+    "refresh": "10s",
+    "panels": [
+      {
+        "title": "Network Overview",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(up{job=\"mitum\"} == 1)",
+            "legendFormat": "Active Nodes"
+          },
+          {
+            "expr": "avg(mitum_block_height)",
+            "legendFormat": "Average Block Height"
+          },
+          {
+            "expr": "sum(rate(mitum_transactions_total[5m]))",
+            "legendFormat": "TX/sec"
+          }
+        ]
+      },
+      {
+        "title": "Node Status",
+        "gridPos": { "h": 10, "w": 12, "x": 0, "y": 8 },
+        "type": "table",
+        "targets": [
+          {
+            "expr": "up{job=\"mitum\"}",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {},
+              "indexByName": {},
+              "renameByName": {
+                "instance": "Node",
+                "node_type": "Type",
+                "Value": "Status"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "title": "Consensus Health",
+        "gridPos": { "h": 10, "w": 12, "x": 12, "y": 8 },
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "(count(mitum_consensus_state == 1) / count(mitum_consensus_state)) * 100",
+            "legendFormat": "Consensus %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 67 },
+                { "color": "green", "value": 80 }
+              ]
+            },
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          }
+        }
+      },
+      {
+        "title": "Block Production",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "mitum_block_height",
+            "legendFormat": "{{instance}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Block Height"
+          }
+        ]
+      },
+      {
+        "title": "Resource Usage",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+            "legendFormat": "CPU {{instance}}"
+          },
+          {
+            "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+            "legendFormat": "Memory {{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "Network Traffic",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(node_network_receive_bytes_total[5m])",
+            "legendFormat": "RX {{instance}}"
+          },
+          {
+            "expr": "rate(node_network_transmit_bytes_total[5m])",
+            "legendFormat": "TX {{instance}}"
+          }
+        ]
+      }
+    ]
+  },
+  "awx_integration": {
+    "webhook_url": "{{ awx_webhook_url | default('') }}",
+    "job_template_id": "{{ awx_job_template_id | default('') }}",
+    "alerts": [
+      {
+        "name": "NodeDown",
+        "condition": "up{job=\"mitum\"} == 0",
+        "duration": "2m",
+        "severity": "critical",
+        "action": "trigger_awx_job"
+      },
+      {
+        "name": "ConsensusLost",
+        "condition": "(count(mitum_consensus_state == 1) / count(mitum_consensus_state)) < 0.67",
+        "duration": "1m",
+        "severity": "critical",
+        "action": "page_oncall"
+      },
+      {
+        "name": "HighCPU",
+        "condition": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100) > 80",
+        "duration": "5m",
+        "severity": "warning",
+        "action": "notify_slack"
+      }
+    ]
+  }
+}

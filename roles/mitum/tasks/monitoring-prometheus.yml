@@ -1,0 +1,161 @@
+---
+# Configure Prometheus monitoring for Mitum nodes
+
+- name: Install Node Exporter
+  when: mitum_node_exporter_enabled | default(true)
+  block:
+    - name: Create node_exporter user
+      user:
+        name: node_exporter
+        system: yes
+        shell: /usr/sbin/nologin
+        home: /var/lib/node_exporter
+        create_home: no
+
+    - name: Download Node Exporter
+      get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+        mode: '0644'
+
+    - name: Extract Node Exporter
+      unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp
+        remote_src: yes
+        creates: /tmp/node_exporter-1.6.1.linux-amd64/node_exporter
+
+    - name: Install Node Exporter binary
+      copy:
+        src: /tmp/node_exporter-1.6.1.linux-amd64/node_exporter
+        dest: /usr/local/bin/node_exporter
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: yes
+
+    - name: Create Node Exporter service
+      template:
+        src: node_exporter.service.j2
+        dest: /etc/systemd/system/node_exporter.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify:
+        - reload systemd
+        - restart node_exporter
+
+    - name: Start Node Exporter
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+- name: Install MongoDB Exporter
+  when: 
+    - mitum_mongodb_enabled | default(true)
+    - mitum_mongodb_exporter_enabled | default(true)
+  block:
+    - name: Download MongoDB Exporter
+      get_url:
+        url: "https://github.com/percona/mongodb_exporter/releases/download/v0.39.0/mongodb_exporter-0.39.0.linux-amd64.tar.gz"
+        dest: /tmp/mongodb_exporter.tar.gz
+        mode: '0644'
+
+    - name: Extract MongoDB Exporter
+      unarchive:
+        src: /tmp/mongodb_exporter.tar.gz
+        dest: /tmp
+        remote_src: yes
+
+    - name: Install MongoDB Exporter binary
+      copy:
+        src: /tmp/mongodb_exporter-0.39.0.linux-amd64/mongodb_exporter
+        dest: /usr/local/bin/mongodb_exporter
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: yes
+
+    - name: Create MongoDB Exporter service
+      template:
+        src: mongodb_exporter.service.j2
+        dest: /etc/systemd/system/mongodb_exporter.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify:
+        - reload systemd
+        - restart mongodb_exporter
+
+    - name: Start MongoDB Exporter
+      systemd:
+        name: mongodb_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+- name: Configure Mitum metrics endpoint
+  when: mitum_prometheus_enabled | default(true)
+  block:
+    - name: Verify Mitum metrics endpoint
+      uri:
+        url: "http://localhost:{{ mitum_prometheus_port }}/metrics"
+        status_code: 200
+        timeout: 5
+      retries: 3
+      delay: 5
+      register: metrics_check
+      failed_when: false
+
+    - name: Display metrics status
+      debug:
+        msg: "Mitum metrics endpoint: {{ 'Available' if metrics_check.status == 200 else 'Not Available' }}"
+
+- name: Configure firewall for monitoring
+  when: mitum_security_firewall_enabled and ansible_os_family in ["Debian", "RedHat"]
+  block:
+    - name: Allow monitoring ports (UFW)
+      when: ansible_os_family == "Debian"
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+        comment: "Prometheus monitoring"
+      loop:
+        - "{{ mitum_prometheus_port }}"
+        - "{{ mitum_node_exporter_port }}"
+        - "9216"  # MongoDB exporter
+
+    - name: Allow monitoring ports (firewalld)
+      when: ansible_os_family == "RedHat"
+      firewalld:
+        port: "{{ item }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - "{{ mitum_prometheus_port }}"
+        - "{{ mitum_node_exporter_port }}"
+        - "9216"
+
+- name: Register node with Prometheus
+  when: groups['monitoring'] is defined and groups['monitoring'] | length > 0
+  delegate_to: "{{ groups['monitoring'][0] }}"
+  block:
+    - name: Add node to Prometheus targets
+      lineinfile:
+        path: /etc/prometheus/targets/mitum.yml
+        line: "    - {{ ansible_default_ipv4.address }}:{{ mitum_prometheus_port }}"
+        create: yes
+        state: present
+      notify: reload prometheus
+
+    - name: Add node exporter target
+      lineinfile:
+        path: /etc/prometheus/targets/node.yml
+        line: "    - {{ ansible_default_ipv4.address }}:{{ mitum_node_exporter_port }}"
+        create: yes
+        state: present
+      notify: reload prometheus

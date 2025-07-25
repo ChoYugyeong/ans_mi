@@ -1,0 +1,32 @@
+---
+# Mitum configuration
+mitum_version: "latest"
+mitum_model_type: "mitum-currency"
+mitum_install_method: "source"
+
+# Key generation
+mitum_keygen_strategy: "centralized"
+mitum_nodejs_version: "18"
+mitum_mitumjs_version: "^2.1.15"
+
+# Paths
+mitum_install_dir: "/opt/mitum"
+mitum_data_dir: "/opt/mitum/data"
+mitum_config_dir: "/opt/mitum/config"
+mitum_keys_dir: "/opt/mitum/keys"
+mitum_log_dir: "/var/log/mitum"
+
+# MongoDB
+mitum_mongodb_version: "7.0"
+mitum_mongodb_install_method: "native"
+mitum_mongodb_replica_set: "mitum"
+
+# Service
+mitum_service_name: "mitum"
+mitum_service_user: "mitum"
+mitum_service_group: "mitum"
+
+# Monitoring
+mitum_monitoring:
+  enabled: false
+  prometheus_enabled: false

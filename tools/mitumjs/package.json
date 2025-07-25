@@ -1,0 +1,32 @@
+{
+  "name": "mitum-ansible-tools",
+  "version": "1.0.0",
+  "description": "MitumJS tools for Mitum Ansible deployment",
+  "main": "mitum-keygen.js",
+  "scripts": {
+    "keygen": "node mitum-keygen.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install-deps": "npm install --no-save"
+  },
+  "keywords": [
+    "mitum",
+    "blockchain",
+    "ansible",
+    "deployment"
+  ],
+  "author": "Mitum Team",
+  "license": "MIT",
+  "dependencies": {
+    "@mitumjs/mitumjs": "^2.1.15"
+  },
+  "optionalDependencies": {
+    "@mitumjs/mitumjs": "^2.1.15"
+  },
+  "devDependencies": {
+    "eslint": "^8.50.0",
+    "prettier": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

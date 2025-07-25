@@ -1,0 +1,46 @@
+[Unit]
+Description=Mitum Blockchain Node
+Documentation=https://github.com/ProtoconNet/mitum-currency
+After=network.target mongodb.service
+Wants=mongodb.service
+
+[Service]
+Type=simple
+User={{ mitum_service_user }}
+Group={{ mitum_service_group }}
+WorkingDirectory={{ mitum_install_dir }}
+ExecStartPre=/bin/bash -c 'until mongosh {{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }} --eval "db.runCommand(\"ping\")"; do sleep 2; done'
+ExecStart={{ mitum_install_dir }}/{{ mitum_model_type }} run \
+    --design={{ mitum_install_dir }}/config/standalone.yml \
+    --dev.allow-consensus
+Restart={{ mitum_service_restart_policy }}
+RestartSec={{ mitum_service_restart_sec }}
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mitum
+Environment="MITUM_LOG_LEVEL={{ mitum_log_level | default('info') }}"
+Environment="MITUM_LOG_FORMAT={{ mitum_log_format | default('json') }}"
+Environment="GOGC=100"
+Environment="GOMEMLIMIT=1GiB"
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ mitum_data_dir }} {{ mitum_install_dir }}/logs {{ mitum_install_dir }}/config
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

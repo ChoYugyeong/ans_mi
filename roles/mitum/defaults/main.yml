@@ -1,0 +1,77 @@
+---
+# Default variables for Mitum role
+# These can be overridden in group_vars or host_vars
+
+# === Environment Configuration ===
+mitum_environment: "production"
+mitum_network_id: "testnet"
+mitum_model_type: "mitum-currency"
+mitum_version: "latest"
+
+# === Installation Configuration ===
+mitum_install_method: "source"  # source, binary, docker
+mitum_service_user: "mitum"
+mitum_service_group: "mitum"
+mitum_base_dir: "/opt/mitum"
+mitum_config_dir: "{{ mitum_base_dir }}/config"
+mitum_data_dir: "{{ mitum_base_dir }}/data"
+mitum_logs_dir: "{{ mitum_base_dir }}/logs"
+
+# === Network Configuration ===
+mitum_api_port: 54320
+mitum_node_port: 4320
+mitum_metrics_port: 9090
+mitum_bind_address: "0.0.0.0"
+
+# === Resource Configuration ===
+mitum_memory_limit: "4G"
+mitum_cpu_limit: "2"
+mitum_max_connections: 1000
+
+# === Feature Flags ===
+mitum_features:
+  enable_api: true
+  enable_digest: true
+  enable_metrics: true
+  enable_profiler: false
+
+# === Security Configuration ===
+mitum_ssh_port: 22
+mitum_firewall_enabled: true
+mitum_ssl_enabled: false
+
+# === MongoDB Configuration ===
+mongodb_enabled: true
+mongodb_port: 27017
+mongodb_replica_set: "mitum-rs"
+mongodb_auth_enabled: true
+
+# === Monitoring Configuration ===
+mitum_monitoring_enabled: true
+monitoring_node_exporter_port: 9100
+monitoring_prometheus_port: 9090
+
+# === Backup Configuration ===
+mitum_backup_enabled: true
+mitum_backup_schedule: "0 2 * * *"  # Daily at 2 AM
+mitum_backup_retention_days: 7
+
+# === Deployment Configuration ===
+mitum_deployment_phase: "all"  # all, prepare, install, configure, start
+mitum_validate_config: true
+mitum_cleanup_enabled: false
+
+# === Performance Configuration ===
+mitum_parallel_processes: 4
+mitum_connection_timeout: 30
+mitum_operation_timeout: 300
+
+# === Development/Debug Configuration ===
+mitum_debug_enabled: false
+mitum_log_level: "info"  # debug, info, warn, error
+
+# === Skip Flags ===
+skip_mongodb: false
+skip_keygen: false
+skip_monitoring: false
+skip_backup: false

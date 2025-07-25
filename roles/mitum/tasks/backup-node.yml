@@ -1,0 +1,112 @@
+---
+# Backup tasks for individual Mitum node
+
+- name: Set backup timestamp
+  set_fact:
+    backup_timestamp: "{{ ansible_date_time.epoch }}"
+    backup_dir: "{{ mitum_backup_dir }}/{{ ansible_date_time.epoch }}"
+
+- name: Create backup directory
+  file:
+    path: "{{ backup_dir }}"
+    state: directory
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0750'
+
+- name: Create backup manifest
+  copy:
+    content: |
+      ---
+      backup_info:
+        timestamp: {{ backup_timestamp }}
+        date: {{ ansible_date_time.iso8601 }}
+        hostname: {{ inventory_hostname }}
+        node_id: {{ mitum_node_id }}
+        network_id: {{ mitum_network_id }}
+        mitum_version: {{ mitum_version | default('unknown') }}
+        backup_type: node
+    dest: "{{ backup_dir }}/manifest.yml"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+
+- name: Backup configuration
+  archive:
+    path:
+      - "{{ mitum_config_dir }}"
+      - "{{ mitum_keys_dir }}"
+    dest: "{{ backup_dir }}/config-backup.tar.gz"
+    format: gz
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0600'
+
+- name: Backup data directory
+  when: mitum_backup_include_data | default(false)
+  block:
+    - name: Check data directory size
+      command: du -sh {{ mitum_data_dir }}
+      register: data_size
+      changed_when: false
+
+    - name: Create data backup
+      archive:
+        path: "{{ mitum_data_dir }}"
+        dest: "{{ backup_dir }}/data-backup.tar.gz"
+        format: gz
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0600'
+      async: 1800
+      poll: 30
+
+- name: Backup MongoDB data
+  when: 
+    - mitum_mongodb_enabled | default(true)
+    - mitum_backup_include_mongodb | default(true)
+  block:
+    - name: Create MongoDB backup
+      shell: |
+        {% if mitum_mongodb_auth_enabled %}
+        mongodump -u "{{ mitum_mongodb_user }}" -p "{{ mitum_mongodb_password }}" \
+          --authenticationDatabase {{ mitum_mongodb_database }} \
+          --db {{ mitum_mongodb_database }} \
+          --gzip \
+          --archive={{ backup_dir }}/mongodb-backup.gz
+        {% else %}
+        mongodump --db {{ mitum_mongodb_database }} \
+          --gzip \
+          --archive={{ backup_dir }}/mongodb-backup.gz
+        {% endif %}
+      become_user: "{{ mitum_service_user }}"
+
+- name: Create backup summary
+  shell: |
+    echo "Backup Summary" > {{ backup_dir }}/summary.txt
+    echo "=============" >> {{ backup_dir }}/summary.txt
+    echo "Timestamp: {{ ansible_date_time.iso8601 }}" >> {{ backup_dir }}/summary.txt
+    echo "Node: {{ inventory_hostname }}" >> {{ backup_dir }}/summary.txt
+    echo "" >> {{ backup_dir }}/summary.txt
+    echo "Files:" >> {{ backup_dir }}/summary.txt
+    ls -lh {{ backup_dir }}/*.gz >> {{ backup_dir }}/summary.txt
+    echo "" >> {{ backup_dir }}/summary.txt
+    echo "Total size:" >> {{ backup_dir }}/summary.txt
+    du -sh {{ backup_dir }} >> {{ backup_dir }}/summary.txt
+  changed_when: false
+
+- name: Set backup complete flag
+  file:
+    path: "{{ backup_dir }}/.complete"
+    state: touch
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+
+- name: Return backup information
+  set_stats:
+    data:
+      backup_results:
+        - node: "{{ inventory_hostname }}"
+          timestamp: "{{ backup_timestamp }}"
+          location: "{{ backup_dir }}"
+          success: true
+    aggregate: yes

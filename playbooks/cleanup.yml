@@ -1,0 +1,126 @@
+---
+# Mitum cleanup tasks - for resetting/reinitializing Mitum
+
+- name: Mitum cleanup operations
+  block:
+    - name: Check if cleanup is requested
+      debug:
+        msg: "Cleanup requested. This will remove Mitum data and MongoDB database."
+      when: mitum_cleanup.enabled
+      tags:
+        - mitum-cleanup
+
+    - name: Stop Mitum service
+      systemd:
+        name: "{{ mitum_service_name }}"
+        state: stopped
+      when: mitum_cleanup.enabled
+      ignore_errors: yes
+      tags:
+        - mitum-cleanup
+
+    - name: Create backup before cleanup
+      block:
+        - name: Create backup directory
+          file:
+            path: "{{ mitum_cleanup.backup_dir }}/{{ ansible_date_time.epoch }}"
+            state: directory
+            mode: '0755'
+
+        - name: Backup Mitum data directory
+          archive:
+            path: "{{ mitum_data_dir }}"
+            dest: "{{ mitum_cleanup.backup_dir }}/{{ ansible_date_time.epoch }}/mitum-data-backup.tar.gz"
+            format: gz
+          when: mitum_cleanup.remove_data
+
+        - name: Backup MongoDB data
+          shell: |
+            {% if mitum_mongodb_auth_enabled %}
+            mongodump -u "{{ mitum_mongodb_user }}" -p "{{ mitum_mongodb_password }}" \
+              --authenticationDatabase mitum \
+              --db mitum \
+              --out {{ mitum_cleanup.backup_dir }}/{{ ansible_date_time.epoch }}/mongodb-backup
+            {% else %}
+            mongodump --db mitum \
+              --out {{ mitum_cleanup.backup_dir }}/{{ ansible_date_time.epoch }}/mongodb-backup
+            {% endif %}
+          when: mitum_cleanup.remove_mongodb_data
+      when: 
+        - mitum_cleanup.enabled
+        - mitum_cleanup.backup_before_cleanup
+      tags:
+        - mitum-cleanup
+        - mitum-backup
+
+    - name: Remove Mitum data directory
+      file:
+        path: "{{ mitum_data_dir }}"
+        state: absent
+      when: 
+        - mitum_cleanup.enabled
+        - mitum_cleanup.remove_data
+      tags:
+        - mitum-cleanup
+
+    - name: Drop MongoDB mitum database
+      shell: |
+        {% if mitum_mongodb_auth_enabled %}
+        mongosh -u "{{ mitum_mongodb_admin_user }}" -p "{{ mitum_mongodb_admin_password }}" \
+          --authenticationDatabase admin \
+          --eval "use mitum; db.dropDatabase()"
+        {% else %}
+        mongosh --eval "use mitum; db.dropDatabase()"
+        {% endif %}
+      when: 
+        - mitum_cleanup.enabled
+        - mitum_cleanup.remove_mongodb_data
+      register: mongodb_drop_result
+      tags:
+        - mitum-cleanup
+
+    - name: Recreate Mitum data directory
+      file:
+        path: "{{ mitum_data_dir }}"
+        state: directory
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0755'
+      when: 
+        - mitum_cleanup.enabled
+        - mitum_cleanup.remove_data
+      tags:
+        - mitum-cleanup
+
+    - name: Remove initialization marker
+      file:
+        path: "{{ mitum_data_dir }}/.initialized"
+        state: absent
+      when: mitum_cleanup.enabled
+      tags:
+        - mitum-cleanup
+
+    - name: Display cleanup results
+      debug:
+        msg: |
+          Cleanup completed:
+          - Mitum data removed: {{ mitum_cleanup.remove_data }}
+          - MongoDB data removed: {{ mitum_cleanup.remove_mongodb_data }}
+          - Backup created: {{ mitum_cleanup.backup_before_cleanup }}
+          {% if mitum_cleanup.backup_before_cleanup %}
+          - Backup location: {{ mitum_cleanup.backup_dir }}/{{ ansible_date_time.epoch }}
+          {% endif %}
+          
+          To reinitialize Mitum, run the playbook with the 'mitum-init' tag.
+      when: mitum_cleanup.enabled
+      tags:
+        - mitum-cleanup
+
+  rescue:
+    - name: Cleanup failed
+      debug:
+        msg: |
+          Cleanup operation failed: {{ ansible_failed_result.msg }}
+          Please check the system manually.
+      tags:
+        - mitum-cleanup

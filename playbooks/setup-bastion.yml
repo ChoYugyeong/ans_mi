@@ -1,0 +1,190 @@
+---
+# Setup SSH configuration for bastion host access
+
+- name: Configure local SSH for bastion access
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create .ssh directory
+      file:
+        path: "{{ ansible_env.HOME }}/.ssh"
+        state: directory
+        mode: '0700'
+        
+    - name: Generate SSH config from inventory
+      template:
+        src: ssh_config.j2
+        dest: "{{ ansible_env.HOME }}/.ssh/config.d/mitum"
+        mode: '0600'
+      vars:
+        bastion_host: "{{ groups['bastion'][0] }}"
+        bastion_user: "{{ hostvars[groups['bastion'][0]]['ansible_user'] }}"
+        bastion_port: "{{ hostvars[groups['bastion'][0]]['ansible_port'] | default(22) }}"
+        
+    - name: Include Mitum SSH config in main SSH config
+      lineinfile:
+        path: "{{ ansible_env.HOME }}/.ssh/config"
+        line: "Include ~/.ssh/config.d/mitum"
+        create: yes
+        mode: '0600'
+        
+    - name: Test SSH multiplexing setup
+      command: ssh -O check bastion
+      register: multiplex_check
+      failed_when: false
+      changed_when: false
+      
+    - name: Establish SSH control connection to bastion
+      command: ssh -N -f bastion
+      when: multiplex_check.rc != 0
+
+- name: Verify bastion connectivity
+  hosts: bastion
+  gather_facts: yes
+  tasks:
+    - name: Check bastion host
+      ping:
+      
+    - name: Install required packages on bastion
+      become: yes
+      package:
+        name:
+          - netcat-openbsd
+          - tcpdump
+          - htop
+          - iotop
+        state: present
+        
+    - name: Configure bastion SSH daemon
+      become: yes
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^MaxSessions', line: 'MaxSessions 50' }
+        - { regexp: '^MaxStartups', line: 'MaxStartups 50:30:100' }
+        - { regexp: '^ClientAliveInterval', line: 'ClientAliveInterval 60' }
+        - { regexp: '^ClientAliveCountMax', line: 'ClientAliveCountMax 3' }
+        - { regexp: '^TCPKeepAlive', line: 'TCPKeepAlive yes' }
+      notify: restart sshd
+      
+  handlers:
+    - name: restart sshd
+      become: yes
+      service:
+        name: sshd
+        state: restarted
+
+- name: Test connectivity through bastion
+  hosts: mitum_nodes
+  gather_facts: no
+  tasks:
+    - name: Test connection through bastion
+      ping:
+      register: ping_result
+      
+    - name: Show connection info
+      debug:
+        msg: |
+          Host: {{ inventory_hostname }}
+          IP: {{ ansible_host }}
+          Connection: {{ 'SUCCESS' if ping_result.ping == 'pong' else 'FAILED' }}
+          
+    - name: Check SSH multiplexing status
+      local_action:
+        module: command
+        cmd: ssh -O check {{ inventory_hostname }}
+      register: mux_status
+      failed_when: false
+      changed_when: false
+      
+    - name: Display multiplexing status
+      debug:
+        msg: "SSH Multiplexing: {{ 'Active' if mux_status.rc == 0 else 'Not Active' }}"
+
+- name: Optimize SSH connections
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create SSH ControlPath directory
+      file:
+        path: /tmp/ansible-ssh-sockets
+        state: directory
+        mode: '0700'
+        
+    - name: Setup connection pooling script
+      copy:
+        content: |
+          #!/bin/bash
+          # SSH connection pool manager for Mitum Ansible
+          
+          SOCKET_DIR="/tmp/ansible-ssh-sockets"
+          HOSTS="{{ groups['mitum_nodes'] | join(' ') }}"
+          
+          case "$1" in
+            start)
+              echo "Starting SSH connection pool..."
+              mkdir -p "$SOCKET_DIR"
+              
+              # Start bastion connection first
+              ssh -M -N -f -o ControlPath="$SOCKET_DIR/bastion.sock" bastion
+              
+              # Start connections to all nodes
+              for host in $HOSTS; do
+                echo "Establishing connection to $host..."
+                ssh -M -N -f -o ControlPath="$SOCKET_DIR/$host.sock" "$host"
+              done
+              echo "Connection pool established."
+              ;;
+              
+            stop)
+              echo "Stopping SSH connection pool..."
+              for sock in "$SOCKET_DIR"/*.sock; do
+                if [ -e "$sock" ]; then
+                  ssh -O exit -o ControlPath="$sock" localhost 2>/dev/null || true
+                fi
+              done
+              rm -f "$SOCKET_DIR"/*.sock
+              echo "Connection pool stopped."
+              ;;
+              
+            status)
+              echo "SSH connection pool status:"
+              for sock in "$SOCKET_DIR"/*.sock; do
+                if [ -e "$sock" ]; then
+                  host=$(basename "$sock" .sock)
+                  if ssh -O check -o ControlPath="$sock" localhost 2>/dev/null; then
+                    echo "  $host: Active"
+                  else
+                    echo "  $host: Inactive"
+                  fi
+                fi
+              done
+              ;;
+              
+            *)
+              echo "Usage: $0 {start|stop|status}"
+              exit 1
+              ;;
+          esac
+        dest: "{{ ansible_env.HOME }}/bin/ssh-pool"
+        mode: '0755'
+        
+    - name: Create systemd user service for SSH pool (optional)
+      copy:
+        content: |
+          [Unit]
+          Description=SSH Connection Pool for Mitum Ansible
+          After=network.target
+          
+          [Service]
+          Type=forking
+          ExecStart={{ ansible_env.HOME }}/bin/ssh-pool start
+          ExecStop={{ ansible_env.HOME }}/bin/ssh-pool stop
+          RemainAfterExit=yes
+          
+          [Install]
+          WantedBy=default.target
+        dest: "{{ ansible_env.HOME }}/.config/systemd/user/ssh-pool.service"
+      when: ansible_service_mgr == "systemd"

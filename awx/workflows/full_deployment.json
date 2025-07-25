@@ -1,0 +1,98 @@
+{
+  "name": "Mitum - Complete Deployment Workflow",
+  "description": "End-to-end deployment workflow for Mitum cluster",
+  "organization": "Default",
+  "survey_enabled": true,
+  "allow_simultaneous": false,
+  "ask_variables_on_launch": true,
+  "inventory": "Mitum Production",
+  "limit": "",
+  "scm_branch": "",
+  "extra_vars": "",
+  "survey_spec": {
+    "name": "Deployment Parameters",
+    "description": "Configure your Mitum deployment",
+    "spec": [
+      {
+        "question_name": "Environment",
+        "question_description": "Target environment",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "target_environment",
+        "choices": ["development", "staging", "production"],
+        "default": "production"
+      },
+      {
+        "question_name": "Network ID",
+        "question_description": "Blockchain network identifier",
+        "required": true,
+        "type": "text",
+        "variable": "mitum_network_id",
+        "default": "mainnet"
+      }
+    ]
+  },
+  "workflow_nodes": [
+    {
+      "identifier": "generate_inventory",
+      "unified_job_template": "Mitum - Generate Inventory",
+      "inventory": null,
+      "limit": null,
+      "credentials": [],
+      "extra_data": {},
+      "all_parents_must_converge": false,
+      "success_nodes": ["generate_keys"],
+      "failure_nodes": ["send_failure_notification"]
+    },
+    {
+      "identifier": "generate_keys",
+      "unified_job_template": "Mitum - Generate Keys",
+      "success_nodes": ["deploy_infrastructure"],
+      "failure_nodes": ["send_failure_notification"]
+    },
+    {
+      "identifier": "deploy_infrastructure",
+      "unified_job_template": "Mitum - Deploy Infrastructure",
+      "success_nodes": ["configure_monitoring"],
+      "failure_nodes": ["rollback"]
+    },
+    {
+      "identifier": "configure_monitoring",
+      "unified_job_template": "Mitum - Setup Monitoring",
+      "success_nodes": ["health_check"],
+      "failure_nodes": ["send_warning"]
+    },
+    {
+      "identifier": "health_check",
+      "unified_job_template": "Mitum - Health Check",
+      "success_nodes": ["send_success_notification"],
+      "failure_nodes": ["send_failure_notification"]
+    },
+    {
+      "identifier": "rollback",
+      "unified_job_template": "Mitum - Rollback",
+      "success_nodes": ["send_rollback_notification"],
+      "failure_nodes": ["send_critical_alert"]
+    },
+    {
+      "identifier": "send_success_notification",
+      "unified_job_template": "Send Notification - Success"
+    },
+    {
+      "identifier": "send_failure_notification",
+      "unified_job_template": "Send Notification - Failure"
+    },
+    {
+      "identifier": "send_warning",
+      "unified_job_template": "Send Notification - Warning"
+    },
+    {
+      "identifier": "send_rollback_notification",
+      "unified_job_template": "Send Notification - Rollback"
+    },
+    {
+      "identifier": "send_critical_alert",
+      "unified_job_template": "Send Critical Alert"
+    }
+  ]
+}

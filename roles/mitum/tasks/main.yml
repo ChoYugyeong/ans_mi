@@ -1,0 +1,103 @@
+---
+# Mitum Role Main Tasks
+# Version: 4.0.0 - Modular task organization
+#
+# This file is the main entry point for the Mitum role.
+# You can run specific tasks using tags.
+#
+# Usage examples:
+# - Full execution: ansible-playbook site.yml
+# - Install only: ansible-playbook site.yml --tags install
+# - Configure only: ansible-playbook site.yml --tags configure
+
+# === Variable Validation ===
+- name: Validate required variables
+  assert:
+    that:
+      - mitum_network_id is defined
+      - mitum_model_type is defined
+      - mitum_service_user is defined
+      - mitum_base_dir is defined
+    fail_msg: "Required variables are not defined. Check group_vars/all.yml"
+  tags: [always]
+
+# === Load OS-specific Variables ===
+- name: Include OS-specific variables
+  include_vars: "{{ item }}"
+  with_first_found:
+    - files:
+        - "{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml"
+        - "{{ ansible_distribution }}.yml"
+        - "{{ ansible_os_family }}.yml"
+        - "default.yml"
+      paths:
+        - vars
+  tags: [always]
+
+# === Execute Tasks by Phase ===
+
+# 1. System Preparation
+- name: System preparation tasks
+  include_tasks: system-prepare.yml
+  when: mitum_deployment_phase | default('all') in ['all', 'prepare']
+  tags: [prepare, system]
+
+# 2. MongoDB Setup
+- name: MongoDB setup tasks
+  include_tasks: mongodb.yml
+  when: 
+    - mitum_deployment_phase | default('all') in ['all', 'mongodb']
+    - not skip_mongodb | default(false)
+  tags: [mongodb, database]
+
+# 3. Mitum Installation
+- name: Install Mitum
+  include_tasks: install.yml
+  when: mitum_deployment_phase | default('all') in ['all', 'install']
+  tags: [install]
+
+# 4. Key Generation
+- name: Key generation tasks
+  include_tasks: keygen.yml
+  when: 
+    - mitum_deployment_phase | default('all') in ['all', 'keygen']
+    - not skip_keygen | default(false)
+  tags: [keygen, keys]
+
+# 5. Node Configuration
+- name: Configure Mitum nodes
+  include_tasks: configure-nodes.yml
+  when: mitum_deployment_phase | default('all') in ['all', 'configure']
+  tags: [configure]
+
+# 6. Service Setup
+- name: Setup Mitum service
+  include_tasks: service.yml
+  when: mitum_deployment_phase | default('all') in ['all', 'service']
+  tags: [service]
+
+# 7. Monitoring Setup
+- name: Setup monitoring
+  include_tasks: monitoring-prometheus.yml
+  when: 
+    - mitum_deployment_phase | default('all') in ['all', 'monitoring']
+    - mitum_monitoring.enabled | default(false)
+  tags: [monitoring]
+
+# 8. Backup Setup
+- name: Setup backup
+  include_tasks: backup-setup.yml
+  when: 
+    - mitum_deployment_phase | default('all') in ['all', 'backup']
+    - mitum_backup.enabled | default(false)
+  tags: [backup]
+
+# === Verify Deployment ===
+- name: Verify deployment
+  include_tasks: verify.yml
+  when: mitum_deployment_phase | default('all') in ['all', 'verify']
+  tags: [verify, check]
+
+# === Flush Handlers ===
+- name: Flush handlers
+  meta: flush_handlers

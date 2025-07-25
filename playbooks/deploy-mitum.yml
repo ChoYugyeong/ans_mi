@@ -1,0 +1,330 @@
+---
+# Main deployment playbook for Mitum blockchain
+
+- name: Pre-deployment validation
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Verify inventory exists
+      stat:
+        path: "{{ inventory_file }}"
+      register: inv_check
+      failed_when: not inv_check.stat.exists
+      
+    - name: Check for required variables
+      assert:
+        that:
+          - mitum_network_id is defined
+          - mitum_model_type is defined
+          - groups['mitum_nodes'] | length > 0
+        fail_msg: "Required variables or groups are missing"
+        
+    - name: Display deployment information
+      debug:
+        msg: |
+          Mitum Deployment Configuration:
+          - Network ID: {{ mitum_network_id }}
+          - Model Type: {{ mitum_model_type }}
+          - Total Nodes: {{ groups['mitum_nodes'] | length }}
+          - Consensus Nodes: {{ groups['mitum_nodes'] | map('extract', hostvars) | selectattr('mitum_api_enabled', 'defined') | rejectattr('mitum_api_enabled') | list | length }}
+          - API Nodes: {{ groups['mitum_nodes'] | map('extract', hostvars) | selectattr('mitum_api_enabled', 'defined') | selectattr('mitum_api_enabled') | list | length }}
+          
+- name: Prepare bastion host
+  hosts: bastion
+  gather_facts: yes
+  become: yes
+  tasks:
+    - name: Ensure bastion is ready
+      ping:
+      
+    - name: Install required packages on bastion
+      package:
+        name:
+          - python3
+          - python3-pip
+          - jq
+          - curl
+          - git
+        state: present
+        
+    - name: Configure SSH multiplexing
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { regexp: '^MaxSessions', line: 'MaxSessions 50' }
+        - { regexp: '^MaxStartups', line: 'MaxStartups 50:30:100' }
+      notify: restart sshd
+      
+  handlers:
+    - name: restart sshd
+      service:
+        name: sshd
+        state: restarted
+
+- name: Deploy MongoDB on nodes
+  hosts: mitum_nodes
+  gather_facts: yes
+  become: yes
+  serial: "{{ mitum_deployment_batch_size | default(5) }}"
+  tags:
+    - mongodb
+  tasks:
+    - name: Install MongoDB
+      include_role:
+        name: mongodb
+      vars:
+        mongodb_version: "{{ mitum_mongodb_version }}"
+        mongodb_port: "{{ mitum_mongodb_port }}"
+        mongodb_replica_set: "{{ mitum_mongodb_replica_set }}"
+        
+    - name: Configure MongoDB replica set
+      run_once: yes
+      delegate_to: "{{ groups['mitum_nodes'][0] }}"
+      mongodb_replicaset:
+        replica_set: "{{ mitum_mongodb_replica_set }}"
+        members: "{{ groups['mitum_nodes'] | map('extract', hostvars, 'ansible_default_ipv4') | map(attribute='address') | list }}"
+      when: groups['mitum_nodes'] | length > 1
+
+- name: Generate keys centrally
+  hosts: localhost
+  gather_facts: no
+  tags:
+    - keygen
+  tasks:
+    - name: Check if keys already exist
+      stat:
+        path: "{{ playbook_dir }}/../keys/{{ mitum_network_id }}"
+      register: keys_check
+      
+    - name: Generate keys using MitumJS
+      when: not keys_check.stat.exists or mitum_force_keygen | default(false)
+      block:
+        - name: Create keys directory
+          file:
+            path: "{{ playbook_dir }}/../keys/{{ mitum_network_id }}"
+            state: directory
+            mode: '0700'
+            
+        - name: Install MitumJS dependencies
+          npm:
+            path: "{{ playbook_dir }}/../tools/mitumjs"
+            state: present
+            
+        - name: Generate node keys
+          command: |
+            node {{ playbook_dir }}/../tools/mitumjs/mitum-keygen.js \
+              --network-id {{ mitum_network_id }} \
+              --node-count {{ groups['mitum_nodes'] | length }} \
+              --threshold {{ mitum_keys_threshold }} \
+              --output {{ playbook_dir }}/../keys/{{ mitum_network_id }}
+          register: keygen_result
+          
+        - name: Parse generated keys
+          set_fact:
+            generated_keys: "{{ keygen_result.stdout | from_json }}"
+          
+        - name: Save keys summary
+          copy:
+            content: "{{ generated_keys | to_nice_yaml }}"
+            dest: "{{ playbook_dir }}/../keys/{{ mitum_network_id }}/keys-summary.yml"
+
+- name: Deploy Mitum nodes
+  hosts: mitum_nodes
+  gather_facts: yes
+  become: yes
+  serial: "{{ mitum_deployment_batch_size | default(5) }}"
+  tags:
+    - install
+    - mitum
+  tasks:
+    - name: Create Mitum user
+      user:
+        name: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        system: yes
+        shell: /bin/bash
+        home: "{{ mitum_base_dir }}"
+        create_home: yes
+        
+    - name: Create directory structure
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0755'
+      loop:
+        - "{{ mitum_install_dir }}"
+        - "{{ mitum_data_dir }}"
+        - "{{ mitum_config_dir }}"
+        - "{{ mitum_keys_dir }}"
+        - "{{ mitum_log_dir }}"
+        - "{{ mitum_backup_dir }}"
+        
+    - name: Deploy Mitum binary
+      include_role:
+        name: mitum
+        tasks_from: install
+      vars:
+        mitum_deployment_phase: install
+
+- name: Configure Mitum nodes
+  hosts: mitum_nodes
+  gather_facts: no
+  become: yes
+  serial: "{{ mitum_deployment_batch_size | default(5) }}"
+  tags:
+    - configure
+    - mitum
+  tasks:
+    - name: Copy node keys
+      copy:
+        src: "{{ playbook_dir }}/../keys/{{ mitum_network_id }}/node{{ mitum_node_id }}/"
+        dest: "{{ mitum_keys_dir }}/"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0600'
+        
+    - name: Configure Mitum node
+      include_role:
+        name: mitum
+        tasks_from: configure-nodes
+      vars:
+        mitum_deployment_phase: configure
+
+- name: Initialize genesis block
+  hosts: mitum_nodes[0]
+  gather_facts: no
+  become: yes
+  run_once: yes
+  tags:
+    - init
+    - genesis
+  tasks:
+    - name: Check if already initialized
+      stat:
+        path: "{{ mitum_data_dir }}/.initialized"
+      register: init_check
+      
+    - name: Initialize genesis
+      when: not init_check.stat.exists
+      block:
+        - name: Generate genesis configuration
+          template:
+            src: "{{ playbook_dir }}/../roles/mitum/templates/genesis.yml.j2"
+            dest: "{{ mitum_config_dir }}/genesis.yml"
+            owner: "{{ mitum_service_user }}"
+            group: "{{ mitum_service_group }}"
+            
+        - name: Initialize blockchain
+          become_user: "{{ mitum_service_user }}"
+          command: |
+            {{ mitum_install_dir }}/{{ mitum_model_type }} init \
+              --config {{ mitum_config_dir }}/config.yml \
+              {{ mitum_config_dir }}/genesis.yml
+          register: init_result
+          
+        - name: Mark as initialized
+          file:
+            path: "{{ mitum_data_dir }}/.initialized"
+            state: touch
+            owner: "{{ mitum_service_user }}"
+            group: "{{ mitum_service_group }}"
+
+- name: Start Mitum services
+  hosts: mitum_nodes
+  gather_facts: no
+  become: yes
+  serial: 1
+  tags:
+    - start
+    - service
+  tasks:
+    - name: Start Mitum service
+      include_role:
+        name: mitum
+        tasks_from: service
+      vars:
+        mitum_deployment_phase: start
+        
+    - name: Wait for node to be ready
+      wait_for:
+        port: "{{ mitum_node_port }}"
+        host: "{{ ansible_host }}"
+        timeout: 60
+        
+    - name: Verify node health
+      uri:
+        url: "http://{{ ansible_host }}:{{ mitum_node_port }}/v2/node"
+        status_code: 200
+      retries: 30
+      delay: 2
+      register: health_check
+      until: health_check.status == 200
+
+- name: Setup monitoring
+  hosts: mitum_nodes
+  gather_facts: no
+  become: yes
+  tags:
+    - monitoring
+  tasks:
+    - name: Configure monitoring
+      include_role:
+        name: mitum
+        tasks_from: monitoring-prometheus
+      when: mitum_monitoring.enabled | default(true)
+
+- name: Post-deployment validation
+  hosts: mitum_nodes
+  gather_facts: no
+  tags:
+    - validate
+  tasks:
+    - name: Check node status
+      uri:
+        url: "http://{{ ansible_host }}:{{ mitum_node_port }}/v2/node"
+      register: node_status
+      
+    - name: Check consensus state
+      uri:
+        url: "http://{{ ansible_host }}:{{ mitum_node_port }}/v2/consensus/state"
+      register: consensus_status
+      when: not (mitum_api_enabled | default(false))
+      
+    - name: Check API endpoints
+      uri:
+        url: "http://{{ ansible_host }}:{{ mitum_api_port }}/{{ item }}"
+      loop:
+        - v2/node
+        - healthz
+      when: mitum_api_enabled | default(false)
+      
+    - name: Display deployment summary
+      debug:
+        msg: |
+          Node: {{ inventory_hostname }}
+          Status: {{ node_status.json.status | default('unknown') }}
+          Type: {{ 'API/Syncer' if mitum_api_enabled | default(false) else 'Consensus' }}
+          {% if not (mitum_api_enabled | default(false)) %}
+          Consensus: {{ consensus_status.json.consensus.state | default('unknown') }}
+          {% endif %}
+      run_once: yes
+      delegate_to: localhost
+      
+- name: Generate deployment report
+  hosts: localhost
+  gather_facts: no
+  tags:
+    - report
+  tasks:
+    - name: Create deployment report
+      template:
+        src: deployment-report.j2
+        dest: "{{ playbook_dir }}/../reports/deployment-{{ ansible_date_time.epoch }}.txt"
+      vars:
+        deployment_timestamp: "{{ ansible_date_time.iso8601 }}"
+        deployed_nodes: "{{ groups['mitum_nodes'] }}"

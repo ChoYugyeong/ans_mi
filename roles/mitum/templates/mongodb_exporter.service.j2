@@ -1,0 +1,19 @@
+[Unit]
+Description=MongoDB Exporter
+After=network.target
+
+[Service]
+Type=simple
+User=mongodb_exporter
+Group=mongodb_exporter
+Environment="MONGODB_URI=mongodb://{% if mitum_mongodb_auth_enabled %}{{ mitum_mongodb_user }}:{{ mitum_mongodb_password }}@{% endif %}{{ mitum_mongodb_host }}:{{ mitum_mongodb_port }}/mitum?replicaSet={{ mitum_mongodb_replica_set }}{% if mitum_mongodb_auth_enabled %}&authSource=mitum{% endif %}"
+ExecStart=/usr/local/bin/mongodb_exporter \
+    --web.listen-address=:{{ mongodb_exporter_port | default(9216) }} \
+    --collect-all \
+    --log.level={{ mongodb_exporter_log_level | default('info') }}
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

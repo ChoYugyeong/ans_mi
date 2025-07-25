@@ -1,0 +1,13 @@
+# Ignore all key files
+*.pem
+*.key
+*.pub
+id_*
+*_rsa
+*_dsa
+*_ecdsa
+*_ed25519
+
+# But track README files
+!README.md
+!.gitignore

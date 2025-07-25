@@ -1,0 +1,18 @@
+{
+  "address": "0x5fcd452b2af79b55957018b5b1cd2d574d20F638fca",
+  "keys": [
+    {
+      "key": "02cd340a4d3f4541d3531208adc4d9b73e78320f4a9925d77a4481622b84b94fb8fpu",
+      "weight": 33
+    },
+    {
+      "key": "02c5ec3050581c3c63f9f90e8ba3bf0fe87b537f69f3112e1c1580ac721246e6b2fpu",
+      "weight": 33
+    },
+    {
+      "key": "026f20337e088cec0224048e950a52b53ec3e938245db87fa3f45504d3d73a99d2fpu",
+      "weight": 34
+    }
+  ],
+  "threshold": 100
+}

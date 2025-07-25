@@ -1,0 +1,123 @@
+---
+# Restore Mitum nodes from backup
+
+- name: Restore Mitum from backup
+  hosts: "{{ target_nodes | default('mitum_nodes') }}"
+  become: yes
+  serial: 1
+  vars:
+    backup_dir: "{{ mitum_backup_dir | default('/var/backups/mitum') }}"
+    backup_timestamp: "{{ backup_timestamp | mandatory('backup_timestamp is required') }}"
+    
+  pre_tasks:
+    - name: Verify backup exists
+      stat:
+        path: "{{ backup_dir }}/{{ backup_timestamp }}"
+      register: backup_check
+      failed_when: not backup_check.stat.exists
+      
+    - name: Confirm restore operation
+      pause:
+        prompt: |
+          WARNING: This will restore node {{ inventory_hostname }} from backup {{ backup_timestamp }}
+          Current data will be overwritten!
+          Press Enter to continue or Ctrl+C to abort
+      when: confirm_restore | default(true)
+      
+  tasks:
+    - name: Stop services
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - mitum
+        - mongod
+        
+    - name: Create restore workspace
+      file:
+        path: /tmp/mitum-restore
+        state: directory
+        mode: '0700'
+        
+    - name: Restore configuration
+      unarchive:
+        src: "{{ backup_dir }}/{{ backup_timestamp }}/config-backup.tar.gz"
+        dest: /tmp/mitum-restore
+        remote_src: yes
+        
+    - name: Restore keys
+      copy:
+        src: /tmp/mitum-restore/keys/
+        dest: "{{ mitum_keys_dir }}/"
+        remote_src: yes
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0600'
+        
+    - name: Restore configuration files
+      copy:
+        src: /tmp/mitum-restore/config/
+        dest: "{{ mitum_config_dir }}/"
+        remote_src: yes
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        
+    - name: Restore data (if available)
+      when: restore_data | default(false)
+      unarchive:
+        src: "{{ backup_dir }}/{{ backup_timestamp }}/data-backup.tar.gz"
+        dest: "{{ mitum_data_dir | dirname }}"
+        remote_src: yes
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        
+    - name: Restore MongoDB (if backed up)
+      when: restore_mongodb | default(false)
+      shell: |
+        mongorestore --drop \
+          {% if mitum_mongodb_auth_enabled %}
+          -u "{{ mitum_mongodb_user }}" \
+          -p "{{ mitum_mongodb_password }}" \
+          --authenticationDatabase mitum \
+          {% endif %}
+          --db mitum \
+          {{ backup_dir }}/{{ backup_timestamp }}/mongodb-backup/mitum
+          
+    - name: Start services
+      systemd:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - mongod
+        - mitum
+        
+    - name: Wait for services
+      wait_for:
+        port: "{{ item }}"
+        timeout: 60
+      loop:
+        - "{{ mitum_mongodb_port }}"
+        - "{{ mitum_node_port }}"
+        
+    - name: Verify restoration
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/node"
+        status_code: 200
+      retries: 30
+      delay: 5
+      
+    - name: Clean up
+      file:
+        path: /tmp/mitum-restore
+        state: absent
+        
+  post_tasks:
+    - name: Display restore summary
+      debug:
+        msg: |
+          Restore completed for {{ inventory_hostname }}
+          Backup: {{ backup_timestamp }}
+          Configuration: Restored
+          Keys: Restored
+          Data: {{ 'Restored' if restore_data else 'Not restored' }}
+          MongoDB: {{ 'Restored' if restore_mongodb else 'Not restored' }}

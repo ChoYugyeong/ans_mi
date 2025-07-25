@@ -1,0 +1,166 @@
+---
+# Validation tasks for Mitum and MongoDB
+
+- name: Validate MongoDB connectivity
+  block:
+    - name: Check MongoDB connection
+      shell: |
+        {% if mitum_mongodb_auth_enabled %}
+        mongosh -u "{{ mitum_mongodb_user }}" -p "{{ mitum_mongodb_password }}" \
+          --authenticationDatabase mitum \
+          --host {{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }} \
+          --eval "db.runCommand('ping')"
+        {% else %}
+        mongosh --host {{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }} \
+          --eval "db.runCommand('ping')"
+        {% endif %}
+      register: mongodb_ping
+      changed_when: false
+
+    - name: Check MongoDB replica set status
+      shell: |
+        {% if mitum_mongodb_auth_enabled %}
+        mongosh -u "{{ mitum_mongodb_user }}" -p "{{ mitum_mongodb_password }}" \
+          --authenticationDatabase mitum \
+          --host {{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }} \
+          --eval "rs.status().ok"
+        {% else %}
+        mongosh --host {{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }} \
+          --eval "rs.status().ok"
+        {% endif %}
+      register: rs_status_check
+      changed_when: false
+
+    - name: Display MongoDB status
+      debug:
+        msg: |
+          MongoDB Connection: {{ 'SUCCESS' if mongodb_ping.rc == 0 else 'FAILED' }}
+          Replica Set Status: {{ 'OK' if rs_status_check.stdout == '1' else 'NOT OK' }}
+  tags:
+    - validate-mongodb
+
+- name: Validate Mitum installation
+  block:
+    - name: Check Mitum binary exists
+      stat:
+        path: "{{ mitum_install_dir }}/{{ mitum_model_type }}"
+      register: mitum_binary
+
+    - name: Check Mitum version
+      command: "{{ mitum_install_dir }}/{{ mitum_model_type }} version"
+      register: mitum_version_check
+      when: mitum_binary.stat.exists
+      changed_when: false
+
+    - name: Check Mitum configuration files
+      stat:
+        path: "{{ item }}"
+      register: config_files
+      loop:
+        - "{{ mitum_install_dir }}/config/standalone.yml"
+        - "{{ mitum_install_dir }}/config/genesis-design.yml"
+
+    - name: Validate Mitum data directory
+      stat:
+        path: "{{ mitum_data_dir }}"
+      register: data_dir
+
+    - name: Check if Mitum is initialized
+      stat:
+        path: "{{ mitum_data_dir }}/.initialized"
+      register: init_marker
+
+    - name: Display Mitum installation status
+      debug:
+        msg: |
+          Mitum Binary: {{ 'Found' if mitum_binary.stat.exists else 'Not Found' }}
+          {% if mitum_binary.stat.exists %}
+          Version: {{ mitum_version_check.stdout | default('Unknown') }}
+          {% endif %}
+          Configuration Files: {{ 'All Present' if config_files.results | selectattr('stat.exists') | list | length == 2 else 'Missing' }}
+          Data Directory: {{ 'Exists' if data_dir.stat.exists else 'Not Found' }}
+          Initialized: {{ 'Yes' if init_marker.stat.exists else 'No' }}
+  tags:
+    - validate-mitum
+
+- name: Validate Mitum service
+  block:
+    - name: Check Mitum service status
+      systemd:
+        name: "{{ mitum_service_name }}"
+      register: mitum_service_status
+
+    - name: Get Mitum service logs (last 20 lines)
+      shell: |
+        journalctl -u {{ mitum_service_name }} -n 20 --no-pager
+      register: mitum_logs
+      changed_when: false
+      when: mitum_service_status.status.ActiveState == 'active'
+
+    - name: Check Mitum API endpoint
+      uri:
+        url: "http://{{ mitum_bind_host }}:{{ mitum_bind_port }}/v1/status"
+        method: GET
+        timeout: 10
+      register: api_check
+      failed_when: false
+      when: mitum_service_status.status.ActiveState == 'active'
+
+    - name: Display service status
+      debug:
+        msg: |
+          Service State: {{ mitum_service_status.status.ActiveState }}
+          Service Status: {{ mitum_service_status.status.SubState }}
+          {% if mitum_service_status.status.ActiveState == 'active' %}
+          API Endpoint: {{ 'Responsive' if api_check.status is defined and api_check.status == 200 else 'Not Responsive' }}
+          {% endif %}
+  tags:
+    - validate-service
+
+- name: Generate validation report
+  set_fact:
+    validation_report:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      mongodb:
+        connected: "{{ mongodb_ping.rc == 0 }}"
+        replica_set_ok: "{{ rs_status_check.stdout == '1' }}"
+      mitum:
+        binary_exists: "{{ mitum_binary.stat.exists }}"
+        config_complete: "{{ config_files.results | selectattr('stat.exists') | list | length == 2 }}"
+        initialized: "{{ init_marker.stat.exists }}"
+        service_active: "{{ mitum_service_status.status.ActiveState == 'active' }}"
+        api_responsive: "{{ api_check.status is defined and api_check.status == 200 }}"
+  tags:
+    - validate-report
+
+- name: Display validation summary
+  debug:
+    msg: |
+      ====== Mitum Validation Summary ======
+      Timestamp: {{ validation_report.timestamp }}
+      
+      MongoDB Status:
+        - Connected: {{ '✓' if validation_report.mongodb.connected else '✗' }}
+        - Replica Set: {{ '✓' if validation_report.mongodb.replica_set_ok else '✗' }}
+      
+      Mitum Status:
+        - Binary: {{ '✓' if validation_report.mitum.binary_exists else '✗' }}
+        - Config: {{ '✓' if validation_report.mitum.config_complete else '✗' }}
+        - Initialized: {{ '✓' if validation_report.mitum.initialized else '✗' }}
+        - Service: {{ '✓' if validation_report.mitum.service_active else '✗' }}
+        - API: {{ '✓' if validation_report.mitum.api_responsive else '✗' }}
+      
+      Overall Status: {{ 'HEALTHY' if (validation_report.values() | map(attribute='values') | flatten | select('equalto', true) | list | length) == 7 else 'ISSUES DETECTED' }}
+  tags:
+    - validate-summary
+
+- name: Export validation report to file
+  copy:
+    content: "{{ validation_report | to_nice_json }}"
+    dest: "{{ mitum_install_dir }}/validation-report-{{ ansible_date_time.epoch }}.json"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0644'
+  when: mitum_export_validation_report | default(false)
+  tags:
+    - validate-export

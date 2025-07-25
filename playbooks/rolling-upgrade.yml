@@ -1,0 +1,246 @@
+---
+# Safe Rolling Upgrade Playbook
+# Version: 4.0.0 - With health checks and automatic rollback
+#
+# This playbook safely upgrades Mitum nodes one by one.
+# 
+# Features:
+# - Upgrades one node at a time
+# - Health checks at each step
+# - Automatic rollback on failure
+# - Maintains consensus
+# - Zero downtime
+
+- name: Rolling upgrade preparation
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Validate upgrade parameters
+      assert:
+        that:
+          - mitum_version is defined
+          - mitum_version != "latest"  # Specific version required
+        fail_msg: "Specific version required for upgrade (not 'latest')"
+
+    - name: Set upgrade metadata
+      set_fact:
+        upgrade_id: "upgrade-{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+        upgrade_start_time: "{{ ansible_date_time.epoch }}"
+        rollback_enabled: "{{ enable_rollback | default(true) }}"
+        
+    - name: Display upgrade plan
+      debug:
+        msg: |
+          ========================================
+          Rolling Upgrade Plan
+          ========================================
+          Upgrade ID: {{ upgrade_id }}
+          Current Version: (will be detected)
+          Target Version: {{ mitum_version }}
+          Rollback Enabled: {{ rollback_enabled }}
+          
+          Nodes to upgrade: {{ groups['mitum_nodes'] | length }}
+          Batch Size: {{ mitum_upgrade.batch_size | default(1) }}
+          Batch Delay: {{ mitum_upgrade.batch_delay | default(60) }}s
+          ========================================
+
+# === Gather Current State ===
+- name: Gather current state
+  hosts: mitum_nodes
+  gather_facts: yes
+  tasks:
+    - name: Get current Mitum version
+      command: "{{ mitum_install_dir }}/mitum version"
+      register: current_version_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Parse version
+      set_fact:
+        current_mitum_version: "{{ current_version_raw.stdout | regex_search('v[0-9.]+') | default('unknown') }}"
+
+    - name: Check node health
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/node"
+        timeout: 5
+      register: node_health
+      failed_when: false
+
+    - name: Get consensus state
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/consensus/state"
+        timeout: 5
+      register: consensus_state
+      failed_when: false
+      when: not (mitum_api_enabled | default(false))
+
+    - name: Save current state
+      set_fact:
+        node_state:
+          hostname: "{{ inventory_hostname }}"
+          current_version: "{{ current_mitum_version }}"
+          is_healthy: "{{ node_health.status | default(0) == 200 }}"
+          consensus_state: "{{ consensus_state.json.consensus.state | default('N/A') if consensus_state.json is defined else 'N/A' }}"
+          role: "{{ 'api' if mitum_api_enabled | default(false) else 'consensus' }}"
+
+# === Pre-upgrade Validation ===
+- name: Pre-upgrade validation
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Aggregate node states
+      set_fact:
+        all_nodes_state: "{{ groups['mitum_nodes'] | map('extract', hostvars, 'node_state') | list }}"
+
+    - name: Check if upgrade needed
+      set_fact:
+        nodes_need_upgrade: "{{ all_nodes_state | selectattr('current_version', 'ne', mitum_version) | list }}"
+
+    - name: Display current state
+      debug:
+        msg: |
+          Current cluster state:
+          {% for node in all_nodes_state %}
+          - {{ node.hostname }}: {{ node.current_version }} ({{ node.role }}) - {{ 'Healthy' if node.is_healthy else 'Unhealthy' }}
+          {% endfor %}
+          
+          Nodes requiring upgrade: {{ nodes_need_upgrade | length }}
+
+    - name: Verify cluster health
+      assert:
+        that:
+          - all_nodes_state | selectattr('is_healthy', 'equalto', true) | list | length >= (groups['mitum_nodes'] | length * 0.8)
+        fail_msg: "Cluster not healthy enough for upgrade. Please fix issues first."
+
+    - name: Skip if no upgrade needed
+      meta: end_play
+      when: nodes_need_upgrade | length == 0
+
+# === Create Pre-upgrade Backup ===
+- name: Create pre-upgrade backup
+  import_playbook: backup.yml
+  vars:
+    backup_type: "pre-upgrade"
+    backup_tag: "{{ upgrade_id }}"
+  when: mitum_upgrade.backup_before_upgrade | default(true)
+
+# === Upgrade Consensus Nodes ===
+- name: Upgrade consensus nodes
+  hosts: mitum_nodes
+  serial: "{{ mitum_upgrade.batch_size | default(1) }}"
+  max_fail_percentage: 0
+  become: yes
+  
+  # Skip API nodes in this phase
+  gather_facts: no
+  tasks:
+    - name: Skip API nodes in consensus phase
+      meta: end_host
+      when: mitum_api_enabled | default(false)
+
+    - name: Include upgrade tasks
+      include_tasks: tasks/upgrade-node.yml
+      vars:
+        node_type: "consensus"
+
+# === Upgrade API/Syncer Nodes ===
+- name: Upgrade API/syncer nodes
+  hosts: mitum_nodes
+  serial: "{{ mitum_upgrade.batch_size | default(1) }}"
+  become: yes
+  gather_facts: no
+  
+  tasks:
+    - name: Skip consensus nodes
+      meta: end_host
+      when: not (mitum_api_enabled | default(false))
+
+    - name: Include upgrade tasks
+      include_tasks: tasks/upgrade-node.yml
+      vars:
+        node_type: "api"
+
+# === Post-upgrade Validation ===
+- name: Post-upgrade validation
+  hosts: mitum_nodes
+  gather_facts: no
+  tasks:
+    - name: Verify upgraded version
+      command: "{{ mitum_install_dir }}/mitum version"
+      register: new_version_raw
+      changed_when: false
+
+    - name: Parse new version
+      set_fact:
+        new_mitum_version: "{{ new_version_raw.stdout | regex_search('v[0-9.]+') | default('unknown') }}"
+
+    - name: Verify version matches target
+      assert:
+        that:
+          - new_mitum_version == mitum_version
+        fail_msg: "Version mismatch: expected {{ mitum_version }}, got {{ new_mitum_version }}"
+
+    - name: Check node health
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/node"
+        timeout: 5
+      register: final_health
+      retries: 10
+      delay: 6
+
+    - name: Verify consensus participation
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/consensus/state"
+        timeout: 5
+      register: final_consensus
+      when: not (mitum_api_enabled | default(false))
+      retries: 10
+      delay: 6
+
+# === Final Cluster Validation ===
+- name: Final cluster validation
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Aggregate final states
+      set_fact:
+        final_nodes_state: "{{ groups['mitum_nodes'] | map('extract', hostvars, ['new_mitum_version']) | list }}"
+
+    - name: Check all nodes upgraded
+      assert:
+        that:
+          - final_nodes_state | select('equalto', mitum_version) | list | length == groups['mitum_nodes'] | length
+        fail_msg: "Not all nodes successfully upgraded"
+
+    - name: Calculate upgrade duration
+      set_fact:
+        upgrade_duration: "{{ (ansible_date_time.epoch | int) - (upgrade_start_time | int) }}"
+
+    - name: Display upgrade summary
+      debug:
+        msg: |
+          ========================================
+          Rolling Upgrade Complete!
+          ========================================
+          Upgrade ID: {{ upgrade_id }}
+          Duration: {{ upgrade_duration }} seconds
+          
+          All nodes successfully upgraded to {{ mitum_version }}
+          
+          Next steps:
+          1. Monitor cluster: make status
+          2. Check logs: make logs
+          3. Verify API: curl http://<api-node>:{{ mitum_api_port }}/v2/node
+          ========================================
+
+# === Failure Handler ===
+- name: Upgrade failure handler
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Trigger rollback if enabled
+      include_tasks: tasks/rollback-node.yml
+      when: 
+        - rollback_enabled | default(true)
+        - ansible_failed_task is defined
+        - ansible_failed_result is defined

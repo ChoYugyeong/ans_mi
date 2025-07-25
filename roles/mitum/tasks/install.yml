@@ -1,0 +1,170 @@
+---
+# Install Mitum based on selected method
+
+- name: Check current installation
+  stat:
+    path: "{{ mitum_install_dir }}/{{ mitum_model_type }}"
+  register: mitum_binary_check
+
+- name: Get current version
+  command: "{{ mitum_install_dir }}/{{ mitum_model_type }} version"
+  register: current_version
+  changed_when: false
+  failed_when: false
+  when: mitum_binary_check.stat.exists
+
+- name: Display installation info
+  debug:
+    msg: |
+      Installation method: {{ mitum_install_method }}
+      Target version: {{ mitum_version }}
+      Current version: {{ current_version.stdout | default('Not installed') }}
+      Force install: {{ mitum_force_install }}
+
+- name: Install from source
+  when: mitum_install_method == "source"
+  block:
+    - name: Install build dependencies
+      package:
+        name:
+          - git
+          - make
+          - gcc
+          - g++
+          - wget
+          - tar
+        state: present
+
+    - name: Install Go
+      when: ansible_os_family in ["Debian", "RedHat"]
+      block:
+        - name: Check Go version
+          command: go version
+          register: go_version_check
+          changed_when: false
+          failed_when: false
+
+        - name: Download and install Go
+          when: go_version_check.rc != 0 or mitum_go_version not in go_version_check.stdout
+          unarchive:
+            src: "https://go.dev/dl/go{{ mitum_go_version }}.linux-amd64.tar.gz"
+            dest: /usr/local
+            remote_src: yes
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Setup Go environment
+          lineinfile:
+            path: /etc/profile.d/go.sh
+            line: "{{ item }}"
+            create: yes
+            mode: '0644'
+          loop:
+            - 'export PATH=$PATH:/usr/local/go/bin'
+            - 'export GOPATH=/opt/go'
+            - 'export GO111MODULE=on'
+
+    - name: Create build directory
+      file:
+        path: "{{ mitum_temp_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Clone Mitum repository
+      git:
+        repo: "{{ mitum_source_repo }}"
+        dest: "{{ mitum_temp_dir }}/mitum"
+        version: "{{ mitum_source_branch }}"
+        force: yes
+
+    - name: Build Mitum
+      shell: |
+        source /etc/profile.d/go.sh
+        cd {{ mitum_temp_dir }}/mitum
+        make build-linux MODEL={{ mitum_model_type }}
+      args:
+        executable: /bin/bash
+        creates: "{{ mitum_temp_dir }}/mitum/bin/{{ mitum_model_type }}"
+      environment:
+        GOPATH: /opt/go
+        PATH: "{{ ansible_env.PATH }}:/usr/local/go/bin"
+
+    - name: Install Mitum binary
+      copy:
+        src: "{{ mitum_temp_dir }}/mitum/bin/{{ mitum_model_type }}"
+        dest: "{{ mitum_install_dir }}/{{ mitum_model_type }}"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0755'
+        remote_src: yes
+      notify: restart mitum service
+
+- name: Install from binary
+  when: mitum_install_method == "binary"
+  block:
+    - name: Create temp directory
+      file:
+        path: "{{ mitum_temp_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download Mitum binary
+      get_url:
+        url: "{{ mitum_binary_url }}"
+        dest: "{{ mitum_temp_dir }}/mitum.tar.gz"
+        checksum: "{{ mitum_binary_checksum | default(omit) }}"
+        mode: '0644'
+
+    - name: Extract Mitum binary
+      unarchive:
+        src: "{{ mitum_temp_dir }}/mitum.tar.gz"
+        dest: "{{ mitum_temp_dir }}"
+        remote_src: yes
+        creates: "{{ mitum_temp_dir }}/{{ mitum_model_type }}"
+
+    - name: Install Mitum binary
+      copy:
+        src: "{{ mitum_temp_dir }}/{{ mitum_model_type }}"
+        dest: "{{ mitum_install_dir }}/{{ mitum_model_type }}"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0755'
+        remote_src: yes
+      notify: restart mitum service
+
+- name: Install from Docker
+  when: mitum_install_method == "docker"
+  block:
+    - name: Install Docker
+      include_tasks: install-docker.yml
+
+    - name: Pull Mitum Docker image
+      docker_image:
+        name: "{{ mitum_docker_image }}:{{ mitum_docker_tag }}"
+        source: pull
+        force_source: "{{ mitum_docker_pull_always }}"
+
+    - name: Create wrapper script for Docker
+      template:
+        src: mitum-docker-wrapper.sh.j2
+        dest: "{{ mitum_install_dir }}/{{ mitum_model_type }}"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0755'
+
+- name: Verify installation
+  command: "{{ mitum_install_dir }}/{{ mitum_model_type }} version"
+  register: verify_install
+  changed_when: false
+  failed_when: verify_install.rc != 0
+
+- name: Display installed version
+  debug:
+    msg: "Mitum installed successfully: {{ verify_install.stdout }}"
+
+- name: Cleanup temp directory
+  file:
+    path: "{{ mitum_temp_dir }}"
+    state: absent
+  when: mitum_temp_dir is defined

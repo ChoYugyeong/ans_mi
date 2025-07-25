@@ -1,0 +1,162 @@
+{
+  "name": "Deploy Mitum Blockchain",
+  "description": "Deploy complete Mitum blockchain cluster with MongoDB and monitoring",
+  "job_type": "run",
+  "inventory": "Mitum Production",
+  "project": "Mitum Ansible",
+  "playbook": "playbooks/deploy-mitum.yml",
+  "scm_branch": "",
+  "forks": 10,
+  "limit": "",
+  "verbosity": 1,
+  "extra_vars": "",
+  "job_tags": "",
+  "force_handlers": false,
+  "skip_tags": "",
+  "start_at_task": "",
+  "timeout": 3600,
+  "use_fact_cache": true,
+  "organization": "Mitum Operations",
+  "credentials": [
+    "Mitum SSH Key",
+    "Mitum Vault Password"
+  ],
+  "survey_enabled": true,
+  "survey_spec": {
+    "name": "Deployment Configuration",
+    "description": "Configure your Mitum deployment parameters",
+    "spec": [
+      {
+        "question_name": "Environment",
+        "question_description": "Target environment for deployment",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "mitum_environment",
+        "min": null,
+        "max": null,
+        "default": "production",
+        "choices": [
+          "development",
+          "staging",
+          "production"
+        ]
+      },
+      {
+        "question_name": "Network ID",
+        "question_description": "Unique identifier for your Mitum network",
+        "required": true,
+        "type": "text",
+        "variable": "mitum_network_id",
+        "min": 3,
+        "max": 50,
+        "default": "mitum"
+      },
+      {
+        "question_name": "Total Nodes",
+        "question_description": "Total number of nodes to deploy (3-100)",
+        "required": true,
+        "type": "integer",
+        "variable": "node_count",
+        "min": 3,
+        "max": 100,
+        "default": 5
+      },
+      {
+        "question_name": "Consensus Nodes",
+        "question_description": "Number of nodes participating in consensus",
+        "required": true,
+        "type": "integer",
+        "variable": "consensus_node_count",
+        "min": 2,
+        "max": 99,
+        "default": 4
+      },
+      {
+        "question_name": "Mitum Version",
+        "question_description": "Version of Mitum to deploy",
+        "required": true,
+        "type": "text",
+        "variable": "mitum_version",
+        "min": 1,
+        "max": 20,
+        "default": "latest"
+      },
+      {
+        "question_name": "Enable Monitoring",
+        "question_description": "Deploy Prometheus and Grafana monitoring",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "enable_monitoring",
+        "default": "yes",
+        "choices": [
+          "yes",
+          "no"
+        ]
+      },
+      {
+        "question_name": "MongoDB Auth",
+        "question_description": "Enable MongoDB authentication",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "mitum_mongodb_auth_enabled",
+        "default": "true",
+        "choices": [
+          "true",
+          "false"
+        ]
+      },
+      {
+        "question_name": "Backup Configuration",
+        "question_description": "Enable automatic backups",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "mitum_backup_enabled",
+        "default": "true",
+        "choices": [
+          "true",
+          "false"
+        ]
+      },
+      {
+        "question_name": "Key Generation",
+        "question_description": "Generate new keys or use existing",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "generate_new_keys",
+        "default": "new",
+        "choices": [
+          "new",
+          "existing"
+        ]
+      }
+    ]
+  },
+  "ask_variables_on_launch": true,
+  "ask_limit_on_launch": true,
+  "ask_tags_on_launch": true,
+  "ask_skip_tags_on_launch": true,
+  "ask_job_type_on_launch": false,
+  "ask_verbosity_on_launch": true,
+  "ask_inventory_on_launch": true,
+  "ask_credential_on_launch": true,
+  "allow_simultaneous": false,
+  "launch_type": "manual",
+  "status": "successful",
+  "execution_environment": null,
+  "notification_templates_started": [],
+  "notification_templates_success": [
+    "Slack Success Notification"
+  ],
+  "notification_templates_error": [
+    "Slack Error Notification",
+    "Email Alert"
+  ],
+  "webhook_service": "",
+  "webhook_credential": null,
+  "labels": [
+    "blockchain",
+    "mitum",
+    "deployment",
+    "infrastructure"
+  ]
+}

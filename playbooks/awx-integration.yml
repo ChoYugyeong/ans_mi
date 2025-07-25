@@ -1,0 +1,182 @@
+---
+# AWX Integration for Mitum monitoring and automation
+
+- name: Configure AWX monitoring integration
+  hosts: localhost
+  gather_facts: no
+  vars:
+    awx_base_url: "{{ lookup('env', 'AWX_URL') | default('http://awx.example.com') }}"
+    awx_token: "{{ lookup('env', 'AWX_TOKEN') }}"
+    prometheus_url: "{{ lookup('env', 'PROMETHEUS_URL') | default('http://prometheus:9090') }}"
+  
+  tasks:
+    - name: Create AWX notification webhook
+      uri:
+        url: "{{ awx_base_url }}/api/v2/notification_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Network Alerts"
+          organization: 1
+          notification_type: "webhook"
+          notification_configuration:
+            url: "{{ awx_base_url }}/api/v2/job_templates/{{ mitum_recovery_template_id }}/launch/"
+            headers:
+              Authorization: "Bearer {{ awx_token }}"
+              Content-Type: "application/json"
+            http_method: "POST"
+      register: webhook_created
+
+    - name: Create AWX inventory source for Prometheus
+      uri:
+        url: "{{ awx_base_url }}/api/v2/inventory_sources/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Prometheus Metrics"
+          inventory: "{{ awx_inventory_id }}"
+          source: "custom"
+          source_vars: |
+            prometheus_url: {{ prometheus_url }}
+            prometheus_query: 'up{job="mitum"}'
+          update_on_launch: true
+          update_cache_timeout: 300
+
+    - name: Configure AWX dashboard for Mitum
+      uri:
+        url: "{{ awx_base_url }}/api/v2/dashboards/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Network Status"
+          organization: 1
+          dashboard_config:
+            - widget_type: "graph"
+              name: "Node Status"
+              config:
+                metric: "up{job='mitum'}"
+                refresh_interval: 30
+            - widget_type: "stat"
+              name: "Active Nodes"
+              config:
+                metric: "count(up{job='mitum'} == 1)"
+            - widget_type: "gauge"
+              name: "Consensus Health"
+              config:
+                metric: "(count(mitum_consensus_state == 1) / count(mitum_consensus_state)) * 100"
+                thresholds:
+                  - value: 67
+                    color: "yellow"
+                  - value: 80
+                    color: "green"
+
+- name: Setup Prometheus federation for AWX
+  hosts: monitoring
+  become: yes
+  tasks:
+    - name: Configure Prometheus for AWX federation
+      blockinfile:
+        path: /etc/prometheus/prometheus.yml
+        marker: "# {mark} AWX FEDERATION CONFIG"
+        block: |
+          # AWX Federation endpoint
+          - job_name: 'awx_federation'
+            honor_labels: true
+            metrics_path: '/federate'
+            params:
+              'match[]':
+                - '{job="mitum"}'
+                - '{job="node_exporter"}'
+                - '{job="mongodb"}'
+            static_configs:
+              - targets:
+                  - '{{ awx_prometheus_endpoint | default("awx.example.com:9090") }}'
+
+    - name: Create AWX-specific recording rules
+      copy:
+        content: |
+          groups:
+            - name: awx_mitum_summary
+              interval: 30s
+              rules:
+                - record: awx:mitum_nodes_total
+                  expr: count(up{job="mitum"})
+                
+                - record: awx:mitum_nodes_healthy
+                  expr: count(up{job="mitum"} == 1)
+                
+                - record: awx:mitum_consensus_percentage
+                  expr: (count(mitum_consensus_state == 1) / count(mitum_consensus_state)) * 100
+                
+                - record: awx:mitum_avg_block_height
+                  expr: avg(mitum_block_height)
+                
+                - record: awx:mitum_api_availability
+                  expr: up{job="mitum",node_type="api"}
+        dest: /etc/prometheus/rules/awx_mitum.yml
+      notify: reload prometheus
+
+    - name: Setup Alertmanager webhook for AWX
+      template:
+        src: alertmanager-awx.yml.j2
+        dest: /etc/alertmanager/alertmanager.yml
+      notify: restart alertmanager
+
+- name: Create AWX job templates for Mitum operations
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create recovery job template
+      uri:
+        url: "{{ awx_base_url }}/api/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Node Recovery"
+          job_type: "run"
+          inventory: "{{ awx_inventory_id }}"
+          project: "{{ awx_project_id }}"
+          playbook: "playbooks/recovery.yml"
+          extra_vars:
+            recovery_action: "auto"
+          allow_simultaneous: false
+          
+    - name: Create monitoring check job template
+      uri:
+        url: "{{ awx_base_url }}/api/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Health Check"
+          job_type: "run"
+          inventory: "{{ awx_inventory_id }}"
+          project: "{{ awx_project_id }}"
+          playbook: "playbooks/validate.yml"
+          verbosity: 1
+          
+    - name: Create workflow for automated recovery
+      uri:
+        url: "{{ awx_base_url }}/api/v2/workflow_job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Automated Recovery Workflow"
+          organization: 1
+          schema:
+            - job_template: "Mitum Health Check"
+              success_nodes:
+                - job_template: "Mitum Node Recovery"
+              failure_nodes:
+                - job_template: "Send Alert Notification"

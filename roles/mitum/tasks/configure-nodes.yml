@@ -1,0 +1,170 @@
+---
+# Configure Mitum nodes
+
+- name: Ensure configuration directory exists
+  file:
+    path: "{{ mitum_config_dir }}"
+    state: directory
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0755'
+
+- name: Read node keys
+  slurp:
+    src: "{{ mitum_keys_dir }}/node.json"
+  register: node_keys_raw
+  when: mitum_node_privatekey is not defined
+
+- name: Parse node keys
+  set_fact:
+    node_keys: "{{ node_keys_raw.content | b64decode | from_json }}"
+  when: node_keys_raw is defined and node_keys_raw.content is defined
+
+- name: Set node key facts
+  set_fact:
+    mitum_node_address: "{{ node_keys.address | default(mitum_node_address) }}"
+    mitum_node_publickey: "{{ node_keys.public_key | default(mitum_node_publickey) }}"
+    mitum_node_privatekey: "{{ node_keys.private_key | default(mitum_node_privatekey) }}"
+  when: node_keys is defined
+
+- name: Validate node keys
+  assert:
+    that:
+      - mitum_node_address | length > 0
+      - mitum_node_publickey | length > 0
+      - mitum_node_privatekey | length > 0
+    fail_msg: "Node keys are not properly configured"
+
+- name: Generate Mitum configuration
+  template:
+    src: config.yml.j2
+    dest: "{{ mitum_config_dir }}/config.yml"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0640'
+    backup: yes
+  notify: restart mitum service
+
+- name: Validate configuration file
+  command: |
+    {{ mitum_install_dir }}/{{ mitum_model_type }} validate-config \
+      {{ mitum_config_dir }}/config.yml
+  register: config_validation
+  changed_when: false
+  failed_when: 
+    - config_validation.rc != 0
+    - "'not implemented' not in config_validation.stderr"
+
+- name: Configure logging
+  when: mitum_log_rotate_enabled
+  block:
+    - name: Install logrotate
+      package:
+        name: logrotate
+        state: present
+
+    - name: Configure log rotation
+      template:
+        src: logrotate.j2
+        dest: /etc/logrotate.d/mitum
+        owner: root
+        group: root
+        mode: '0644'
+
+- name: Setup TLS certificates
+  when: mitum_security_ssl_enabled
+  block:
+    - name: Ensure certificate directory exists
+      file:
+        path: "{{ mitum_config_dir }}/certs"
+        state: directory
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0700'
+
+    - name: Copy TLS certificate
+      copy:
+        src: "{{ mitum_security_ssl_cert }}"
+        dest: "{{ mitum_config_dir }}/certs/cert.pem"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0644'
+
+    - name: Copy TLS key
+      copy:
+        src: "{{ mitum_security_ssl_key }}"
+        dest: "{{ mitum_config_dir }}/certs/key.pem"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0600'
+
+- name: Configure firewall rules
+  when: mitum_security_firewall_enabled and ansible_os_family in ["Debian", "RedHat"]
+  block:
+    - name: Install firewall package
+      package:
+        name: "{{ 'ufw' if ansible_os_family == 'Debian' else 'firewalld' }}"
+        state: present
+
+    - name: Configure UFW rules (Debian/Ubuntu)
+      when: ansible_os_family == "Debian"
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto | default('tcp') }}"
+        src: "{{ item.src | default('any') }}"
+        comment: "{{ item.comment | default('Mitum') }}"
+      loop: "{{ mitum_firewall_rules }}"
+
+    - name: Configure firewalld rules (RedHat/CentOS)
+      when: ansible_os_family == "RedHat"
+      firewalld:
+        port: "{{ item.port }}/{{ item.proto | default('tcp') }}"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop: "{{ mitum_firewall_rules }}"
+
+- name: Create systemd service file
+  template:
+    src: mitum.service.j2
+    dest: /etc/systemd/system/{{ mitum_service_name }}.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart mitum service
+
+- name: Set service environment file
+  template:
+    src: mitum.env.j2
+    dest: "{{ mitum_config_dir }}/mitum.env"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0640'
+  when: mitum_service_environment | length > 0
+
+- name: Create helper scripts
+  template:
+    src: "{{ item }}.j2"
+    dest: "{{ mitum_install_dir }}/{{ item }}"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0755'
+  loop:
+    - mitum-health-check.sh
+    - mitum-backup.sh
+    - mitum-logs.sh
+
+- name: Setup configuration backup
+  cron:
+    name: "Mitum configuration backup"
+    minute: "0"
+    hour: "*/6"
+    job: |
+      tar -czf {{ mitum_backup_dir }}/config-backup-$(date +\%Y\%m\%d-\%H\%M\%S).tar.gz \
+        -C {{ mitum_base_dir }} config keys
+    user: "{{ mitum_service_user }}"
+    state: present
+  when: mitum_backup_enabled

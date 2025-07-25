@@ -1,0 +1,39 @@
+---
+# Common validation tasks that can be included in multiple playbooks
+# This file helps reduce code duplication across playbooks
+
+- name: Validate deployment environment
+  assert:
+    that:
+      - mitum_environment is defined
+      - mitum_environment in ['development', 'staging', 'production']
+    fail_msg: "mitum_environment must be one of: development, staging, production"
+  tags: [validation]
+
+- name: Validate required core variables
+  assert:
+    that:
+      - mitum_network_id is defined
+      - mitum_model_type is defined
+      - mitum_service_user is defined
+      - mitum_base_dir is defined
+      - groups['mitum_nodes'] is defined
+      - groups['mitum_nodes'] | length > 0
+    fail_msg: "Required variables are not defined. Check group_vars/all.yml"
+  tags: [validation]
+
+- name: Display deployment information
+  debug:
+    msg: |
+      ========================================
+      Mitum Deployment Configuration
+      ========================================
+      Network ID: {{ mitum_network_id }}
+      Model Type: {{ mitum_model_type }}
+      Environment: {{ mitum_environment }}
+      Total Nodes: {{ groups['mitum_nodes'] | length }}
+      Base Directory: {{ mitum_base_dir }}
+      Service User: {{ mitum_service_user }}
+      ========================================
+  run_once: true
+  tags: [validation] 

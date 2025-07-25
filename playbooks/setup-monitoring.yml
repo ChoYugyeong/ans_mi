@@ -1,0 +1,130 @@
+---
+# Setup Prometheus monitoring for Mitum nodes
+
+- name: Deploy Prometheus monitoring stack
+  hosts: monitoring
+  become: yes
+  vars:
+    prometheus_version: "2.45.0"
+    alertmanager_version: "0.26.0"
+    grafana_version: "10.2.0"
+  
+  tasks:
+    - name: Create monitoring user
+      user:
+        name: prometheus
+        system: yes
+        shell: /usr/sbin/nologin
+        home: /var/lib/prometheus
+        create_home: no
+
+    - name: Create prometheus directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /etc/prometheus/rules
+        - /var/lib/prometheus
+
+    - name: Download Prometheus
+      unarchive:
+        src: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: /tmp
+        remote_src: yes
+        creates: /tmp/prometheus-{{ prometheus_version }}.linux-amd64
+
+    - name: Install Prometheus binaries
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - prometheus
+        - promtool
+
+    - name: Configure Prometheus
+      template:
+        src: prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+      notify: restart prometheus
+
+    - name: Create Prometheus service
+      template:
+        src: prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+      notify:
+        - reload systemd
+        - restart prometheus
+
+    - name: Configure Alertmanager
+      when: mitum_alerting_enabled | default(true)
+      block:
+        - name: Download Alertmanager
+          unarchive:
+            src: "https://github.com/prometheus/alertmanager/releases/download/v{{ alertmanager_version }}/alertmanager-{{ alertmanager_version }}.linux-amd64.tar.gz"
+            dest: /tmp
+            remote_src: yes
+
+        - name: Install Alertmanager
+          copy:
+            src: "/tmp/alertmanager-{{ alertmanager_version }}.linux-amd64/alertmanager"
+            dest: /usr/local/bin/alertmanager
+            mode: '0755'
+            remote_src: yes
+
+        - name: Configure Alertmanager
+          template:
+            src: alertmanager.yml.j2
+            dest: /etc/prometheus/alertmanager.yml
+
+        - name: Create Alertmanager service
+          template:
+            src: alertmanager.service.j2
+            dest: /etc/systemd/system/alertmanager.service
+
+    - name: Start monitoring services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      loop:
+        - prometheus
+        - alertmanager
+
+- name: Configure nodes for monitoring
+  hosts: mitum_nodes
+  become: yes
+  tasks:
+    - name: Setup node monitoring
+      include_role:
+        name: mitum
+        tasks_from: monitoring-prometheus
+
+    - name: Configure firewall for monitoring
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        src: "{{ hostvars[groups['monitoring'][0]]['ansible_default_ipv4']['address'] }}"
+      loop:
+        - "9100"  # Node exporter
+        - "9099"  # Mitum metrics
+        - "9216"  # MongoDB exporter
+      when: ansible_os_family == "Debian"
+
+- name: Setup AWX integration
+  hosts: localhost
+  tasks:
+    - name: Configure AWX monitoring
+      include_tasks: awx-integration.yml
+      when: awx_integration_enabled | default(false)

@@ -1,0 +1,112 @@
+---
+# Generate Mitum configuration files based on generated keys
+
+- name: Generate Mitum configurations
+  hosts: mitum_nodes
+  gather_facts: yes
+  become: yes
+  vars:
+    keys_base_dir: "{{ playbook_dir }}/../keys/{{ mitum_network_id }}"
+    
+  tasks:
+    - name: Load generated keys summary
+      include_vars:
+        file: "{{ keys_base_dir }}/keys-summary.yml"
+        name: keys_summary
+      run_once: true
+      delegate_to: localhost
+      
+    - name: Load node-specific keys
+      include_vars:
+        file: "{{ keys_base_dir }}/node{{ mitum_node_id }}/node.json"
+        name: node_keys
+      delegate_to: localhost
+      
+    - name: Create configuration directory
+      file:
+        path: "{{ mitum_config_dir }}"
+        state: directory
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0755'
+        
+    - name: Generate node configuration
+      template:
+        src: node-config.yml.j2
+        dest: "{{ mitum_config_dir }}/config.yml"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0644'
+        backup: yes
+      vars:
+        node_id: "{{ mitum_node_id }}"
+        all_node_keys: "{{ keys_summary.nodes }}"
+        
+    - name: Generate genesis configuration (on first node only)
+      template:
+        src: genesis.yml.j2
+        dest: "{{ mitum_config_dir }}/genesis.yml"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0644'
+      vars:
+        genesis_node_key: "{{ keys_summary.nodes[0] }}"
+        all_node_keys: "{{ keys_summary.nodes }}"
+      when: mitum_node_id | int == 0
+      
+    - name: Create storage directory
+      file:
+        path: "{{ mitum_data_dir }}/node-{{ mitum_node_id }}"
+        state: directory
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0755'
+        
+    - name: Save node information
+      copy:
+        content: |
+          # Node Information
+          NODE_ID={{ mitum_node_id }}
+          NODE_ADDRESS={{ mitum_network_id }}{{ mitum_node_id }}sas
+          NODE_PORT={{ mitum_node_port }}
+          API_ENABLED={{ mitum_api_enabled | default(false) }}
+          {% if mitum_api_enabled | default(false) %}
+          API_PORT={{ mitum_api_port | default(54320) }}
+          {% endif %}
+        dest: "{{ mitum_config_dir }}/node.info"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0644'
+        
+- name: Validate generated configurations
+  hosts: mitum_nodes
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: Check configuration files exist
+      stat:
+        path: "{{ item }}"
+      register: config_files
+      loop:
+        - "{{ mitum_config_dir }}/config.yml"
+        - "{{ mitum_config_dir }}/node.info"
+        
+    - name: Check genesis file on node0
+      stat:
+        path: "{{ mitum_config_dir }}/genesis.yml"
+      register: genesis_file
+      when: mitum_node_id | int == 0
+      
+    - name: Display configuration summary
+      debug:
+        msg: |
+          Configuration Summary for {{ inventory_hostname }}:
+          - Node ID: {{ mitum_node_id }}
+          - Config directory: {{ mitum_config_dir }}
+          - Data directory: {{ mitum_data_dir }}
+          - Network ID: {{ mitum_network_id }}
+          - Node Port: {{ mitum_node_port }}
+          - API Enabled: {{ mitum_api_enabled | default(false) }}
+          {% if mitum_node_id | int == 0 %}
+          - Genesis: Available
+          {% endif %}

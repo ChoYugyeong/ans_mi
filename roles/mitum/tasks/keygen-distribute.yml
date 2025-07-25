@@ -1,0 +1,110 @@
+---
+# Distribute centrally generated keys to each node
+
+- name: Get node-specific keys
+  set_fact:
+    my_node_keys: "{{ hostvars['localhost']['mitum_generated_keys'][inventory_hostname] }}"
+  when: hostvars['localhost']['mitum_generated_keys'] is defined
+
+- name: Verify key assignment
+  assert:
+    that:
+      - my_node_keys is defined
+      - my_node_keys.privatekey is defined
+      - my_node_keys.publickey is defined
+      - my_node_keys.address is defined
+    fail_msg: "No keys found for {{ inventory_hostname }}"
+    success_msg: "Keys found for {{ inventory_hostname }}"
+
+- name: Create keys directory on node
+  file:
+    path: "{{ mitum_keys_dir }}"
+    state: directory
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0700'
+
+- name: Save node keys
+  copy:
+    content: |
+      {
+        "node_id": {{ my_node_keys.node_id }},
+        "address": "{{ my_node_keys.address }}",
+        "privatekey": "{{ my_node_keys.privatekey }}",
+        "publickey": "{{ my_node_keys.publickey }}",
+        "network_address": "{{ my_node_keys.network_address }}"
+      }
+    dest: "{{ mitum_keys_dir }}/node-{{ my_node_keys.node_id }}.json"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0600'
+    backup: yes
+
+- name: Set node-specific facts
+  set_fact:
+    mitum_node_id: "{{ my_node_keys.node_id }}"
+    mitum_node_address: "{{ my_node_keys.address }}"
+    mitum_node_privatekey: "{{ my_node_keys.privatekey }}"
+    mitum_node_publickey: "{{ my_node_keys.publickey }}"
+    mitum_node_network_address: "{{ my_node_keys.network_address }}"
+
+- name: Extract and save configurations
+  block:
+    - name: Create temporary directory
+      tempfile:
+        state: directory
+      register: extract_temp_dir
+
+    - name: Copy configuration archive
+      copy:
+        src: "{{ hostvars['localhost']['mitum_keygen_temp_dir'] }}/mitum-configs.tar.gz"
+        dest: "{{ extract_temp_dir.path }}/mitum-configs.tar.gz"
+
+    - name: Extract configurations
+      unarchive:
+        src: "{{ extract_temp_dir.path }}/mitum-configs.tar.gz"
+        dest: "{{ extract_temp_dir.path }}"
+        remote_src: yes
+
+    - name: Copy node-specific configuration
+      copy:
+        src: "{{ extract_temp_dir.path }}/configs/{{ 'n' + mitum_node_id|string + '.yml' if groups['mitum_nodes'] | length > 1 else 'standalone.yml' }}"
+        dest: "{{ mitum_config_dir }}/node.yml"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0644'
+        remote_src: yes
+
+    - name: Copy genesis configuration
+      copy:
+        src: "{{ extract_temp_dir.path }}/configs/genesis.yml"
+        dest: "{{ mitum_config_dir }}/genesis.yml"
+        owner: "{{ mitum_service_user }}"
+        group: "{{ mitum_service_group }}"
+        mode: '0644'
+        remote_src: yes
+      when: mitum_node_id == 0
+
+    - name: Clean up temporary directory
+      file:
+        path: "{{ extract_temp_dir.path }}"
+        state: absent
+
+- name: Create all nodes reference file
+  copy:
+    content: "{{ hostvars['localhost']['mitum_generated_keys'] | to_nice_json }}"
+    dest: "{{ mitum_config_dir }}/all-nodes.json"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0644'
+
+- name: Display node configuration summary
+  debug:
+    msg: |
+      Node Configuration Summary:
+      - Hostname: {{ inventory_hostname }}
+      - Node ID: {{ mitum_node_id }}
+      - Network Address: {{ mitum_node_network_address }}
+      - Public Key: {{ mitum_node_publickey }}
+      - Port: {{ mitum_node_port }}
+      - API Enabled: {{ mitum_api_enabled | default(false) }}

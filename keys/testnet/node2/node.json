@@ -1,0 +1,8 @@
+{
+  "node_id": 2,
+  "address": "testnet2sas",
+  "public_key": "026f20337e088cec0224048e950a52b53ec3e938245db87fa3f45504d3d73a99d2fpu",
+  "private_key": "e7a59ffcbb080f656a2f616e2eba6c11f61e656e3ebfb90bdd09efdc3eff2fdefpr",
+  "type": "btc",
+  "hint": "mpr"
+}

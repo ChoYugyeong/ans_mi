@@ -1,0 +1,239 @@
+# Mitum Ansible .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Ansible
+*.retry
+ansible.log
+logs/
+.ansible/
+.cache/
+*.vault
+.vault_pass
+vault_password_file
+
+# SSH Keys
+keys/ssh/*
+!keys/ssh/.gitkeep
+keys/mitum/*/privatekey
+keys/mitum/*/publickey
+
+# Temporary files
+tmp/
+temp/
+cache/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Backup files
+backup_*/
+backups/
+*.backup
+*.bak
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Environment specific
+.env
+.env.local
+inventories/*/host_vars/*_local.yml
+inventories/*/group_vars/*_local.yml
+
+# Mitum specific
+mitum-data/
+mitum-logs/
+genesis-data/
+
+# Monitoring
+prometheus-data/
+grafana-data/
+alertmanager-data/
+
+# AWX
+awx/credentials/*_actual.yml
+awx_credentials.yml
+
+# Node modules (if using JS tools)
+node_modules/
+package-lock.json
+
+# Terraform (if used)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Custom
+local/
+private/
+secret/
+        url: "{{ awx_base_url }}/api/v2/dashboards/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Network Status"
+          organization: 1
+          dashboard_config:
+            - widget_type: "graph"
+              name: "Node Status"
+              config:
+                metric: "up{job='mitum'}"
+                refresh_interval: 30
+            - widget_type: "stat"
+              name: "Active Nodes"
+              config:
+                metric: "count(up{job='mitum'} == 1)"
+            - widget_type: "gauge"
+              name: "Consensus Health"
+              config:
+                metric: "(count(mitum_consensus_state == 1) / count(mitum_consensus_state)) * 100"
+                thresholds:
+                  - value: 67
+                    color: "yellow"
+                  - value: 80
+                    color: "green"
+
+- name: Setup Prometheus federation for AWX
+  hosts: monitoring
+  become: yes
+  tasks:
+    - name: Configure Prometheus for AWX federation
+      blockinfile:
+        path: /etc/prometheus/prometheus.yml
+        marker: "# {mark} AWX FEDERATION CONFIG"
+        block: |
+          # AWX Federation endpoint
+          - job_name: 'awx_federation'
+            honor_labels: true
+            metrics_path: '/federate'
+            params:
+              'match[]':
+                - '{job="mitum"}'
+                - '{job="node_exporter"}'
+                - '{job="mongodb"}'
+            static_configs:
+              - targets:
+                  - '{{ awx_prometheus_endpoint | default("awx.example.com:9090") }}'
+
+    - name: Create AWX-specific recording rules
+      copy:
+        content: |
+          groups:
+            - name: awx_mitum_summary
+              interval: 30s
+              rules:
+                - record: awx:mitum_nodes_total
+                  expr: count(up{job="mitum"})
+                
+                - record: awx:mitum_nodes_healthy
+                  expr: count(up{job="mitum"} == 1)
+                
+                - record: awx:mitum_consensus_percentage
+                  expr: (count(mitum_consensus_state == 1) / count(mitum_consensus_state)) * 100
+                
+                - record: awx:mitum_avg_block_height
+                  expr: avg(mitum_block_height)
+                
+                - record: awx:mitum_api_availability
+                  expr: up{job="mitum",node_type="api"}
+        dest: /etc/prometheus/rules/awx_mitum.yml
+      notify: reload prometheus
+
+    - name: Setup Alertmanager webhook for AWX
+      template:
+        src: alertmanager-awx.yml.j2
+        dest: /etc/alertmanager/alertmanager.yml
+      notify: restart alertmanager
+
+- name: Create AWX job templates for Mitum operations
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create recovery job template
+      uri:
+        url: "{{ awx_base_url }}/api/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Node Recovery"
+          job_type: "run"
+          inventory: "{{ awx_inventory_id }}"
+          project: "{{ awx_project_id }}"
+          playbook: "playbooks/recovery.yml"
+          extra_vars:
+            recovery_action: "auto"
+          allow_simultaneous: false
+          
+    - name: Create monitoring check job template
+      uri:
+        url: "{{ awx_base_url }}/api/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Health Check"
+          job_type: "run"
+          inventory: "{{ awx_inventory_id }}"
+          project: "{{ awx_project_id }}"
+          playbook: "playbooks/validate.yml"
+          verbosity: 1
+          
+    - name: Create workflow for automated recovery
+      uri:
+        url: "{{ awx_base_url }}/api/v2/workflow_job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ awx_token }}"
+        body_format: json
+        body:
+          name: "Mitum Automated Recovery Workflow"
+          organization: 1
+          schema:
+            - job_template: "Mitum Health Check"
+              success_nodes:
+                - job_template: "Mitum Node Recovery"
+              failure_nodes:
+                - job_template: "Send Alert Notification"
+# macOS system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.vault_pass
+*.pem
+*.key
+secrets/
+vault*.yml

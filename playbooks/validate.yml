@@ -1,0 +1,190 @@
+---
+# Comprehensive validation playbook for Mitum cluster
+
+- name: Gather cluster information
+  hosts: mitum_nodes
+  gather_facts: yes
+  tasks:
+    - name: Check Mitum service status
+      systemd:
+        name: "{{ mitum_service_name }}"
+      register: service_status
+      
+    - name: Get Mitum version
+      command: "{{ mitum_install_dir }}/{{ mitum_model_type }} version"
+      register: mitum_version
+      changed_when: false
+      failed_when: false
+      
+    - name: Check node API endpoint
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/node"
+        timeout: 5
+      register: node_api
+      failed_when: false
+      
+    - name: Check consensus state (consensus nodes only)
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/consensus/state"
+        timeout: 5
+      register: consensus_state
+      failed_when: false
+      when: not (mitum_api_enabled | default(false))
+      
+    - name: Get block manifest
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/block/manifest"
+        timeout: 5
+      register: block_manifest
+      failed_when: false
+      
+    - name: Check MongoDB connection
+      command: |
+        mongosh --quiet --eval "db.adminCommand('ping')" \
+        {% if mitum_mongodb_auth_enabled %}
+        -u {{ mitum_mongodb_user }} -p {{ mitum_mongodb_password }} \
+        {% endif %}
+        mongodb://localhost:{{ mitum_mongodb_port }}/{{ mitum_mongodb_database }}
+      register: mongodb_check
+      failed_when: false
+      changed_when: false
+      
+    - name: Collect validation results
+      set_fact:
+        node_validation:
+          hostname: "{{ inventory_hostname }}"
+          node_id: "{{ mitum_node_id }}"
+          node_type: "{{ 'API/Syncer' if mitum_api_enabled | default(false) else 'Consensus' }}"
+          service:
+            name: "{{ mitum_service_name }}"
+            state: "{{ service_status.status.ActiveState }}"
+            enabled: "{{ service_status.status.UnitFileState == 'enabled' }}"
+          version: "{{ mitum_version.stdout | default('Unknown') }}"
+          api:
+            available: "{{ node_api.status | default(0) == 200 }}"
+            response_time: "{{ node_api.elapsed | default(-1) }}"
+          consensus:
+            available: "{{ consensus_state.status | default(0) == 200 }}"
+            state: "{{ consensus_state.json.consensus.state | default('N/A') if consensus_state.json is defined else 'N/A' }}"
+          block:
+            height: "{{ block_manifest.json.height | default(-1) if block_manifest.json is defined else -1 }}"
+            hash: "{{ block_manifest.json.hash | default('N/A') if block_manifest.json is defined else 'N/A' }}"
+          mongodb:
+            connected: "{{ mongodb_check.rc | default(1) == 0 }}"
+          system:
+            cpu_count: "{{ ansible_processor_vcpus }}"
+            memory_mb: "{{ ansible_memtotal_mb }}"
+            disk_free_gb: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/') | first).size_available | default(0) / 1024 / 1024 / 1024 | round(2) }}"
+
+- name: Analyze cluster health
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Aggregate validation results
+      set_fact:
+        cluster_validation:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          network_id: "{{ mitum_network_id }}"
+          total_nodes: "{{ groups['mitum_nodes'] | length }}"
+          nodes: "{{ groups['mitum_nodes'] | map('extract', hostvars, 'node_validation') | list }}"
+          
+    - name: Calculate cluster statistics
+      set_fact:
+        cluster_stats:
+          services_running: "{{ cluster_validation.nodes | selectattr('service.state', 'equalto', 'active') | list | length }}"
+          apis_available: "{{ cluster_validation.nodes | selectattr('api.available') | list | length }}"
+          consensus_nodes: "{{ cluster_validation.nodes | selectattr('node_type', 'equalto', 'Consensus') | list | length }}"
+          consensus_active: "{{ cluster_validation.nodes | selectattr('node_type', 'equalto', 'Consensus') | selectattr('consensus.state', 'in', ['CONSENSUS', 'SYNCING']) | list | length }}"
+          mongodb_connected: "{{ cluster_validation.nodes | selectattr('mongodb.connected') | list | length }}"
+          block_heights: "{{ cluster_validation.nodes | map(attribute='block.height') | select('>', -1) | list }}"
+          
+    - name: Determine cluster health status
+      set_fact:
+        cluster_health:
+          overall: >-
+            {%- if cluster_stats.services_running < cluster_validation.total_nodes -%}
+            CRITICAL
+            {%- elif cluster_stats.consensus_active < (cluster_stats.consensus_nodes * 0.67) | round(0, 'ceil') | int -%}
+            CRITICAL
+            {%- elif cluster_stats.block_heights | unique | length > 1 -%}
+            WARNING
+            {%- else -%}
+            HEALTHY
+            {%- endif -%}
+          consensus_threshold_met: "{{ cluster_stats.consensus_active >= (cluster_stats.consensus_nodes * 0.67) | round(0, 'ceil') | int }}"
+          block_sync_status: "{{ 'Synced' if cluster_stats.block_heights | unique | length == 1 else 'Out of sync' }}"
+          max_block_height: "{{ cluster_stats.block_heights | max | default(0) }}"
+          min_block_height: "{{ cluster_stats.block_heights | min | default(0) }}"
+          
+    - name: Generate validation report
+      template:
+        src: validation-report.j2
+        dest: "{{ playbook_dir }}/../reports/validation-{{ ansible_date_time.epoch }}.txt"
+        
+    - name: Display validation summary
+      debug:
+        msg: |
+          ========================================
+          Mitum Cluster Validation Report
+          ========================================
+          Network ID: {{ mitum_network_id }}
+          Timestamp: {{ cluster_validation.timestamp }}
+          
+          CLUSTER STATUS: {{ cluster_health.overall }}
+          
+          Node Summary:
+          - Total Nodes: {{ cluster_validation.total_nodes }}
+          - Services Running: {{ cluster_stats.services_running }}/{{ cluster_validation.total_nodes }}
+          - APIs Available: {{ cluster_stats.apis_available }}
+          - MongoDB Connected: {{ cluster_stats.mongodb_connected }}/{{ cluster_validation.total_nodes }}
+          
+          Consensus Status:
+          - Consensus Nodes: {{ cluster_stats.consensus_nodes }}
+          - Active in Consensus: {{ cluster_stats.consensus_active }}
+          - Threshold Met: {{ cluster_health.consensus_threshold_met }}
+          - Required for Consensus: {{ (cluster_stats.consensus_nodes * 0.67) | round(0, 'ceil') | int }}
+          
+          Blockchain Status:
+          - Sync Status: {{ cluster_health.block_sync_status }}
+          - Max Block Height: {{ cluster_health.max_block_height }}
+          - Min Block Height: {{ cluster_health.min_block_height }}
+          - Height Difference: {{ cluster_health.max_block_height - cluster_health.min_block_height }}
+          
+          Node Details:
+          {% for node in cluster_validation.nodes %}
+          
+          {{ node.hostname }} (Node {{ node.node_id }}):
+            Type: {{ node.node_type }}
+            Service: {{ node.service.state }}
+            Version: {{ node.version }}
+            API: {{ 'Available' if node.api.available else 'Not Available' }}
+            {% if node.node_type == 'Consensus' %}
+            Consensus: {{ node.consensus.state }}
+            {% endif %}
+            Block Height: {{ node.block.height }}
+            MongoDB: {{ 'Connected' if node.mongodb.connected else 'Not Connected' }}
+          {% endfor %}
+          ========================================
+          
+    - name: Alert on critical issues
+      when: cluster_health.overall == "CRITICAL"
+      fail:
+        msg: |
+          CRITICAL: Cluster health check failed!
+          - Services Running: {{ cluster_stats.services_running }}/{{ cluster_validation.total_nodes }}
+          - Consensus Active: {{ cluster_stats.consensus_active }}/{{ cluster_stats.consensus_nodes }}
+          - Consensus Threshold Met: {{ cluster_health.consensus_threshold_met }}
+          Please check the detailed report for more information.
+          
+    - name: Warn on issues
+      when: cluster_health.overall == "WARNING"
+      debug:
+        msg: |
+          WARNING: Cluster has some issues
+          - Block sync status: {{ cluster_health.block_sync_status }}
+          - Height difference: {{ cluster_health.max_block_height - cluster_health.min_block_height }}
+          
+    - name: Save validation results
+      copy:
+        content: "{{ cluster_validation | to_nice_yaml }}"
+        dest: "{{ playbook_dir }}/../reports/validation-{{ ansible_date_time.epoch }}.yml"

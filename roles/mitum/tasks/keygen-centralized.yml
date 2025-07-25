@@ -1,0 +1,163 @@
+---
+# Centralized key generation using MitumJS
+
+- name: Install Node.js and dependencies on controller
+  block:
+    - name: Check if Node.js is installed
+      command: node --version
+      register: node_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install Node.js if needed
+      package:
+        name: nodejs
+        state: present
+      when: node_check.rc != 0
+      become: yes
+
+    - name: Check if npm is installed
+      command: npm --version
+      register: npm_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install npm if needed
+      package:
+        name: npm
+        state: present
+      when: npm_check.rc != 0
+      become: yes
+
+- name: Prepare key generation environment
+  block:
+    - name: Create temporary directory for key generation
+      tempfile:
+        state: directory
+        prefix: mitum_keygen_
+      register: keygen_temp_dir
+
+    - name: Copy key generation files
+      copy:
+        src: "{{ item }}"
+        dest: "{{ keygen_temp_dir.path }}/"
+        mode: '0755'
+      loop:
+        - mitum-keygen.js
+        - package.json
+
+    - name: Install MitumJS dependencies
+      npm:
+        path: "{{ keygen_temp_dir.path }}"
+        production: yes
+      environment:
+        NODE_ENV: production
+
+- name: Generate keys for all nodes
+  block:
+    - name: Get total node count
+      set_fact:
+        total_nodes: "{{ groups['mitum_nodes'] | length }}"
+
+    - name: Run MitumJS key generation script
+      command: |
+        node mitum-keygen.js {{ total_nodes }} ./keys
+      args:
+        chdir: "{{ keygen_temp_dir.path }}"
+      environment:
+        NODE_ENV: production
+      register: keygen_result
+
+    - name: Display key generation output
+      debug:
+        var: keygen_result.stdout_lines
+      when: mitum_debug | default(false)
+
+    - name: Load generated keys
+      set_fact:
+        all_node_keys: "{{ lookup('file', keygen_temp_dir.path + '/keys/node-keys.json') | from_json }}"
+
+    - name: Verify key count
+      assert:
+        that:
+          - all_node_keys | length == total_nodes | int
+        fail_msg: "Generated keys ({{ all_node_keys | length }}) don't match node count ({{ total_nodes }})"
+
+    - name: Create key mapping for each node
+      set_fact:
+        node_key_mapping: >-
+          {{
+            node_key_mapping | default({}) | combine({
+              item.0: {
+                'node_id': idx,
+                'address': 'node' + idx|string + '-' + mitum_network_id,
+                'privatekey': item.1.privatekey,
+                'publickey': item.1.publickey,
+                'network_address': mitum_network_id + idx|string + 'sas',
+                'mitum_address': item.1.address
+              }
+            })
+          }}
+      loop: "{{ groups['mitum_nodes'] | zip(all_node_keys) | list }}"
+      loop_control:
+        index_var: idx
+
+    - name: Save key mapping for distribution
+      copy:
+        content: "{{ node_key_mapping | to_nice_json }}"
+        dest: "{{ keygen_temp_dir.path }}/key-mapping.json"
+
+- name: Generate configurations
+  block:
+    - name: Create configurations directory
+      file:
+        path: "{{ keygen_temp_dir.path }}/configs"
+        state: directory
+
+    - name: Generate node configurations
+      template:
+        src: "node-config.yml.j2"
+        dest: "{{ keygen_temp_dir.path }}/configs/n{{ item }}.yml"
+      loop: "{{ range(0, total_nodes | int) | list }}"
+      vars:
+        node_id: "{{ item }}"
+        node_keys: "{{ all_node_keys[item] }}"
+
+    - name: Generate genesis configuration
+      template:
+        src: "genesis.yml.j2"
+        dest: "{{ keygen_temp_dir.path }}/configs/genesis.yml"
+      vars:
+        genesis_node_key: "{{ all_node_keys[0] }}"
+
+    - name: Create configuration archive
+      archive:
+        path:
+          - "{{ keygen_temp_dir.path }}/keys"
+          - "{{ keygen_temp_dir.path }}/configs"
+          - "{{ keygen_temp_dir.path }}/key-mapping.json"
+        dest: "{{ keygen_temp_dir.path }}/mitum-configs.tar.gz"
+        format: gz
+
+    - name: Fetch configuration archive
+      fetch:
+        src: "{{ keygen_temp_dir.path }}/mitum-configs.tar.gz"
+        dest: "{{ playbook_dir }}/generated/"
+        flat: yes
+
+- name: Store keys in memory for distribution
+  set_fact:
+    mitum_generated_keys: "{{ node_key_mapping }}"
+    mitum_keygen_temp_dir: "{{ keygen_temp_dir.path }}"
+  delegate_facts: true
+
+- name: Generate AWX artifact data
+  set_stats:
+    data:
+      generated_keys_summary:
+        total_nodes: "{{ total_nodes }}"
+        network_id: "{{ mitum_network_id }}"
+        timestamp: "{{ ansible_date_time.iso8601 }}"
+        nodes: "{{ node_key_mapping.keys() | list }}"
+    aggregate: no
+  when: awx_job_id is defined

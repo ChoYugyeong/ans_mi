@@ -1,0 +1,77 @@
+---
+# Genesis block configuration
+# Network: {{ mitum_network_id }}
+
+facts:
+  # Suffrage nodes configuration
+  - _hint: currency-suffrage-genesis-join-fact-v0.0.1
+    nodes:
+{% for i in range(0, mitum_consensus_nodes | default(groups['mitum_nodes'] | length)) %}
+      - _hint: currency-node-v0.0.1
+        address: {{ mitum_network_id }}{{ i }}sas
+        publickey: {{ all_node_keys[i].publickey }}
+{% endfor %}
+
+  # Network policy
+  - _hint: currency-genesis-network-policy-fact-v0.0.1
+    policy:
+      _hint: currency-network-policy-v0.0.1
+      max_operations_in_proposal: {{ mitum_network_policy.max_operations_in_proposal | default(99) }}
+      suffrage_candidate_lifespan: {{ mitum_network_policy.suffrage_candidate_lifespan | default(333333333) }}
+      suffrage_candidate_limiter:
+        _hint: currency-fixed-suffrage-candidate-limiter-rule-v0.0.1
+        limit: {{ mitum_network_policy.suffrage_candidate_limit | default(1) }}
+      max_suffrage_size: {{ mitum_network_policy.max_suffrage_size | default(99) }}
+      suffrage_expel_lifespan: {{ mitum_network_policy.suffrage_expel_lifespan | default(99) }}
+
+  # Currency registration
+  - _hint: mitum-currency-register-genesis-currency-operation-fact-v0.0.1
+    genesis_node_key: {{ genesis_node_key.publickey }}
+    keys:
+      _hint: mitum-currency-keys-v0.0.1
+      keys:
+        - _hint: mitum-currency-key-v0.0.1
+          key: {{ genesis_node_key.publickey }}
+          weight: 100
+      threshold: 100
+    currencies:
+{% for currency in mitum_currencies | default([{'id': 'MCC', 'initial_supply': '100000000000000000000000000000000000000000', 'decimal': 9}]) %}
+      - _hint: mitum-currency-currency-design-v0.0.1
+        currency_id: {{ currency.id }}
+        initial_supply: "{{ currency.initial_supply }}"
+        decimal: {{ currency.decimal | default(9) }}
+        genesis_account: {{ genesis_node_key.address }}
+        policy:
+          _hint: mitum-currency-currency-policy-v0.0.1
+          min_balance: "{{ currency.min_balance | default('1') }}"
+          feeer:
+            _hint: mitum-currency-fixed-feeer-v0.0.1
+            receiver: {{ currency.fee_receiver | default(genesis_node_key.address) }}
+            amount: "{{ currency.fee_amount | default('1') }}"
+        total_supply: "{{ currency.initial_supply }}"
+{% endfor %}
+
+{% if mitum_model_type == 'mitum-nft' %}
+  # NFT configuration
+  - _hint: mitum-nft-genesis-policy-fact-v0.0.1
+    policy:
+      _hint: mitum-nft-policy-v0.0.1
+      max_collections_per_account: {{ mitum_nft_policy.max_collections_per_account | default(100) }}
+      max_nfts_per_collection: {{ mitum_nft_policy.max_nfts_per_collection | default(10000) }}
+{% endif %}
+
+{% if mitum_model_type == 'mitum-document' %}
+  # Document configuration
+  - _hint: mitum-document-genesis-policy-fact-v0.0.1
+    policy:
+      _hint: mitum-document-policy-v0.0.1
+      max_documents_per_account: {{ mitum_document_policy.max_documents_per_account | default(1000) }}
+      max_document_size: {{ mitum_document_policy.max_document_size | default(10485760) }}  # 10MB
+{% endif %}
+
+{% if mitum_additional_genesis_facts is defined %}
+# Additional genesis facts
+{% for fact in mitum_additional_genesis_facts %}
+{{ fact | to_nice_yaml | indent(2, false) }}
+{% endfor %}
+{% endif %}

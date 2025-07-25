@@ -1,0 +1,72 @@
+#!/bin/bash
+# Mitum service wrapper script
+# {{ ansible_managed }}
+
+set -euo pipefail
+
+# Configuration
+MITUM_BIN="{{ mitum_install_dir }}/{{ mitum_model_type }}"
+CONFIG_FILE="{{ mitum_config_dir }}/node.yml"
+LOG_FILE="{{ mitum_log_dir }}/mitum.log"
+PID_FILE="/var/run/mitum/mitum.pid"
+
+# Environment
+export MITUM_LOG_LEVEL="{{ mitum_log_level | default('info') }}"
+export MITUM_LOG_FORMAT="{{ mitum_log_format | default('json') }}"
+export MITUM_NODE_ID="{{ mitum_node_id }}"
+export MITUM_NETWORK_ID="{{ mitum_network_id }}"
+
+# Create directories
+mkdir -p "{{ mitum_log_dir }}"
+mkdir -p "{{ mitum_data_dir }}"
+mkdir -p "/var/run/mitum"
+
+# Check if binary exists
+if [[ ! -x "$MITUM_BIN" ]]; then
+    echo "Error: Mitum binary not found or not executable: $MITUM_BIN" >&2
+    exit 1
+fi
+
+# Check if config exists
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Error: Configuration file not found: $CONFIG_FILE" >&2
+    exit 1
+fi
+
+# Check MongoDB connectivity
+check_mongodb() {
+    echo "Checking MongoDB connectivity..."
+    {% if mitum_mongodb_auth_enabled %}
+    mongosh -u "{{ mitum_mongodb_user }}" -p "{{ mitum_mongodb_password }}" \
+        --authenticationDatabase mitum \
+        --host {{ mitum_mongodb_host }}:{{ mitum_mongodb_port }} \
+        --eval "db.runCommand({ping: 1})" &>/dev/null
+    {% else %}
+    mongosh --host {{ mitum_mongodb_host }}:{{ mitum_mongodb_port }} \
+        --eval "db.runCommand({ping: 1})" &>/dev/null
+    {% endif %}
+}
+
+# Wait for MongoDB
+echo "Waiting for MongoDB..."
+max_attempts=30
+attempt=0
+while ! check_mongodb; do
+    ((attempt++))
+    if [[ $attempt -ge $max_attempts ]]; then
+        echo "Error: MongoDB not available after $max_attempts attempts" >&2
+        exit 1
+    fi
+    echo "MongoDB not ready, waiting... (attempt $attempt/$max_attempts)"
+    sleep 2
+done
+echo "MongoDB is ready"
+
+# Start Mitum
+echo "Starting Mitum node {{ mitum_node_id }}..."
+exec "$MITUM_BIN" node run \
+    --design="$CONFIG_FILE" \
+    {% if mitum_dev_allow_consensus | default(false) %}
+    --dev.allow-consensus \
+    {% endif %}
+    2>&1 | tee -a "$LOG_FILE"

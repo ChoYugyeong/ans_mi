@@ -1,0 +1,28 @@
+---
+# Environment-specific variables for production
+# Generated: Wed Jul 23 15:28:54 KST 2025
+
+# Environment settings
+mitum_environment: "production"
+mitum_network_id: "testnet"
+mitum_model_type: "mitum-currency"
+
+# Version configuration
+mitum_version: "latest"
+mitum_install_method: "source"
+
+# Network configuration
+mitum_nodes_subnet: "192.168.50"
+mitum_bastion_host: "3.34.138.191"
+mitum_bastion_user: "ubuntu"
+
+# SSH configuration
+mitum_ssh_via_bastion: true
+mitum_bastion_key: "keys/ssh/production/bastion.pem"
+
+# Feature flags based on model
+mitum_features:
+  enable_api: true
+  enable_digest: true
+  enable_metrics: true
+  enable_profiler: false

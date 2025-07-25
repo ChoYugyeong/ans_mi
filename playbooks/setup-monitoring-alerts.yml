@@ -1,0 +1,229 @@
+---
+# Enhanced Monitoring and Alerting Setup for Mitum Network
+# Includes Prometheus, Grafana, AlertManager, and custom alerts
+
+- name: Deploy monitoring and alerting stack
+  hosts: monitoring
+  become: true
+  vars:
+    prometheus_version: "2.40.0"
+    grafana_version: "9.3.0"
+    alertmanager_version: "0.25.0"
+    node_exporter_version: "1.5.0"
+    
+  tasks:
+    # Install Prometheus
+    - name: Create Prometheus user
+      user:
+        name: prometheus
+        system: true
+        shell: /bin/false
+        home: /var/lib/prometheus
+        createhome: true
+        
+    - name: Download and install Prometheus
+      unarchive:
+        src: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: /tmp
+        remote_src: yes
+        
+    - name: Install Prometheus binaries
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        mode: '0755'
+        owner: root
+        group: root
+        remote_src: yes
+      loop:
+        - prometheus
+        - promtool
+        
+    - name: Create Prometheus configuration
+      template:
+        src: prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+      notify: restart prometheus
+      
+    - name: Create Prometheus service
+      template:
+        src: prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+      notify: restart prometheus
+      
+    # Install AlertManager
+    - name: Download and install AlertManager
+      unarchive:
+        src: "https://github.com/prometheus/alertmanager/releases/download/v{{ alertmanager_version }}/alertmanager-{{ alertmanager_version }}.linux-amd64.tar.gz"
+        dest: /tmp
+        remote_src: yes
+        
+    - name: Install AlertManager binary
+      copy:
+        src: "/tmp/alertmanager-{{ alertmanager_version }}.linux-amd64/alertmanager"
+        dest: /usr/local/bin/alertmanager
+        mode: '0755'
+        owner: root
+        group: root
+        remote_src: yes
+        
+    - name: Configure AlertManager
+      template:
+        src: alertmanager.yml.j2
+        dest: /etc/alertmanager/alertmanager.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+      notify: restart alertmanager
+      
+    # Install Grafana
+    - name: Add Grafana repository
+      yum_repository:
+        name: grafana
+        description: Grafana repository
+        baseurl: https://packages.grafana.com/oss/rpm
+        gpgcheck: yes
+        gpgkey: https://packages.grafana.com/gpg.key
+      when: ansible_os_family == "RedHat"
+      
+    - name: Install Grafana
+      package:
+        name: grafana
+        state: present
+        
+    - name: Configure Grafana
+      template:
+        src: grafana.ini.j2
+        dest: /etc/grafana/grafana.ini
+        owner: grafana
+        group: grafana
+        mode: '0640'
+      notify: restart grafana
+      
+    # Configure Mitum-specific alerts
+    - name: Create Mitum alert rules
+      copy:
+        content: |
+          groups:
+          - name: mitum_alerts
+            interval: 30s
+            rules:
+            - alert: MitumNodeDown
+              expr: up{job="mitum"} == 0
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Mitum node {{ $labels.instance }} is down"
+                description: "Mitum node {{ $labels.instance }} has been down for more than 5 minutes."
+                
+            - alert: MitumBlockHeightStalled
+              expr: rate(mitum_block_height[5m]) == 0
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Mitum block height stalled on {{ $labels.instance }}"
+                description: "Block height has not increased for 10 minutes on {{ $labels.instance }}."
+                
+            - alert: MitumHighMemoryUsage
+              expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.85
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "High memory usage on {{ $labels.instance }}"
+                description: "Memory usage is above 85% on {{ $labels.instance }}."
+                
+            - alert: MitumDiskSpaceLow
+              expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Low disk space on {{ $labels.instance }}"
+                description: "Less than 15% disk space remaining on {{ $labels.instance }}."
+                
+            - alert: MitumPeerCountLow
+              expr: mitum_peers_connected < 2
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Low peer count on {{ $labels.instance }}"
+                description: "Connected peers count is less than 2 on {{ $labels.instance }}."
+        dest: /etc/prometheus/rules/mitum_alerts.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+      notify: restart prometheus
+      
+    # Setup notification channels
+    - name: Configure Slack notifications
+      blockinfile:
+        path: /etc/alertmanager/alertmanager.yml
+        block: |
+          route:
+            group_by: ['alertname', 'cluster', 'service']
+            group_wait: 10s
+            group_interval: 10s
+            repeat_interval: 12h
+            receiver: 'slack-notifications'
+            routes:
+            - match:
+                severity: critical
+              receiver: pagerduty-critical
+              
+          receivers:
+          - name: 'slack-notifications'
+            slack_configs:
+            - api_url: '{{ slack_webhook_url }}'
+              channel: '#mitum-alerts'
+              title: 'Mitum Alert'
+              text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+              
+          - name: 'pagerduty-critical'
+            pagerduty_configs:
+            - service_key: '{{ pagerduty_service_key }}'
+      when: slack_webhook_url is defined
+      
+    # Install Grafana dashboards
+    - name: Create Mitum dashboard
+      copy:
+        src: mitum-dashboard.json
+        dest: /var/lib/grafana/dashboards/mitum-dashboard.json
+        owner: grafana
+        group: grafana
+        mode: '0644'
+        
+    # Start services
+    - name: Start and enable monitoring services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      loop:
+        - prometheus
+        - alertmanager
+        - grafana
+        - node_exporter
+        
+  handlers:
+    - name: restart prometheus
+      systemd:
+        name: prometheus
+        state: restarted
+        
+    - name: restart alertmanager
+      systemd:
+        name: alertmanager
+        state: restarted
+        
+    - name: restart grafana
+      systemd:
+        name: grafana-server
+        state: restarted 

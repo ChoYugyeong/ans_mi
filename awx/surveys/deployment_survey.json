@@ -1,0 +1,174 @@
+{
+  "name": "Mitum Deployment Configuration",
+  "description": "Configure parameters for Mitum blockchain deployment",
+  "spec": [
+    {
+      "question_name": "Deployment Type",
+      "question_description": "Choose the type of deployment",
+      "required": true,
+      "type": "multiplechoice",
+      "variable": "deployment_type",
+      "default": "new",
+      "choices": [
+        "new",
+        "upgrade",
+        "expansion",
+        "migration"
+      ]
+    },
+    {
+      "question_name": "Network Configuration",
+      "question_description": "Network topology and size",
+      "required": true,
+      "type": "textarea",
+      "variable": "network_config",
+      "default": "nodes: 5\nconsensus: 4\napi: 1",
+      "min": 10,
+      "max": 1000
+    },
+    {
+      "question_name": "Node Specifications",
+      "question_description": "Hardware requirements per node",
+      "required": true,
+      "type": "multiplechoice",
+      "variable": "node_specs",
+      "default": "standard",
+      "choices": [
+        {
+          "key": "minimal",
+          "value": "Minimal (2 CPU, 4GB RAM)"
+        },
+        {
+          "key": "standard",
+          "value": "Standard (4 CPU, 8GB RAM)"
+        },
+        {
+          "key": "performance",
+          "value": "Performance (8 CPU, 16GB RAM)"
+        },
+        {
+          "key": "enterprise",
+          "value": "Enterprise (16 CPU, 32GB RAM)"
+        }
+      ]
+    },
+    {
+      "question_name": "Storage Configuration",
+      "question_description": "Storage backend and size",
+      "required": true,
+      "type": "multiselect",
+      "variable": "storage_config",
+      "default": ["ssd", "backup"],
+      "choices": [
+        "ssd",
+        "nvme",
+        "backup",
+        "archive",
+        "redundant"
+      ]
+    },
+    {
+      "question_name": "Security Options",
+      "question_description": "Security features to enable",
+      "required": false,
+      "type": "multiselect",
+      "variable": "security_options",
+      "default": ["firewall", "ssl"],
+      "choices": [
+        "firewall",
+        "ssl",
+        "api_auth",
+        "key_rotation",
+        "audit_logging",
+        "encryption_at_rest"
+      ]
+    },
+    {
+      "question_name": "Genesis Configuration",
+      "question_description": "Initial blockchain parameters (JSON)",
+      "required": true,
+      "type": "textarea",
+      "variable": "genesis_config",
+      "default": "{\n  \"currencies\": [{\n    \"currency\": \"MCC\",\n    \"total_supply\": \"1000000000\"\n  }]\n}",
+      "min": 20,
+      "max": 5000
+    },
+    {
+      "question_name": "Backup Strategy",
+      "question_description": "Backup configuration",
+      "required": true,
+      "type": "multiplechoice",
+      "variable": "backup_strategy",
+      "default": "daily",
+      "choices": [
+        {
+          "key": "none",
+          "value": "No backups"
+        },
+        {
+          "key": "daily",
+          "value": "Daily backups (7 day retention)"
+        },
+        {
+          "key": "continuous",
+          "value": "Continuous replication"
+        },
+        {
+          "key": "custom",
+          "value": "Custom schedule"
+        }
+      ]
+    },
+    {
+      "question_name": "Monitoring Integration",
+      "question_description": "Monitoring and alerting configuration",
+      "required": true,
+      "type": "multiselect",
+      "variable": "monitoring_integration",
+      "default": ["prometheus", "grafana"],
+      "choices": [
+        "prometheus",
+        "grafana",
+        "alertmanager",
+        "elasticsearch",
+        "datadog",
+        "newrelic"
+      ]
+    },
+    {
+      "question_name": "Notification Channels",
+      "question_description": "Where to send alerts and notifications",
+      "required": false,
+      "type": "multiselect",
+      "variable": "notification_channels",
+      "default": ["slack"],
+      "choices": [
+        "email",
+        "slack",
+        "pagerduty",
+        "webhook",
+        "sms"
+      ]
+    },
+    {
+      "question_name": "Maintenance Window",
+      "question_description": "Preferred maintenance window (UTC)",
+      "required": false,
+      "type": "text",
+      "variable": "maintenance_window",
+      "default": "Sunday 02:00-06:00",
+      "min": 5,
+      "max": 50
+    },
+    {
+      "question_name": "Additional Variables",
+      "question_description": "Additional Ansible variables (YAML format)",
+      "required": false,
+      "type": "textarea",
+      "variable": "additional_vars",
+      "default": "# Example:\n# custom_parameter: value",
+      "min": 0,
+      "max": 2000
+    }
+  ]
+}

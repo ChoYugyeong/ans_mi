@@ -1,0 +1,153 @@
+{
+  "name": "Mitum Rolling Upgrade Configuration",
+  "description": "Configure parameters for zero-downtime Mitum upgrade",
+  "spec": [
+    {
+      "question_name": "Target Version",
+      "question_description": "Mitum version to upgrade to",
+      "required": true,
+      "type": "text",
+      "variable": "mitum_version",
+      "min": 1,
+      "max": 20,
+      "default": "latest"
+    },
+    {
+      "question_name": "Upgrade Strategy",
+      "question_description": "How to perform the upgrade",
+      "required": true,
+      "type": "multiplechoice",
+      "variable": "upgrade_strategy",
+      "default": "rolling",
+      "choices": [
+        {
+          "key": "rolling",
+          "value": "Rolling (Zero downtime)"
+        },
+        {
+          "key": "canary",
+          "value": "Canary (Test on one node first)"
+        },
+        {
+          "key": "blue_green",
+          "value": "Blue/Green (Parallel environment)"
+        },
+        {
+          "key": "maintenance",
+          "value": "Maintenance window (Downtime allowed)"
+        }
+      ]
+    },
+    {
+      "question_name": "Batch Size",
+      "question_description": "Number of nodes to upgrade simultaneously",
+      "required": true,
+      "type": "integer",
+      "variable": "upgrade_batch_size",
+      "min": 1,
+      "max": 10,
+      "default": 1
+    },
+    {
+      "question_name": "Batch Delay",
+      "question_description": "Seconds to wait between batches",
+      "required": true,
+      "type": "integer",
+      "variable": "upgrade_batch_delay",
+      "min": 30,
+      "max": 600,
+      "default": 60
+    },
+    {
+      "question_name": "Pre-upgrade Backup",
+      "question_description": "Create backup before upgrade",
+      "required": true,
+      "type": "multiplechoice",
+      "variable": "pre_upgrade_backup",
+      "default": "yes",
+      "choices": [
+        "yes",
+        "no"
+      ]
+    },
+    {
+      "question_name": "Health Check Timeout",
+      "question_description": "Seconds to wait for health check after upgrade",
+      "required": true,
+      "type": "integer",
+      "variable": "health_check_timeout",
+      "min": 60,
+      "max": 600,
+      "default": 300
+    },
+    {
+      "question_name": "Rollback on Failure",
+      "question_description": "Automatically rollback if upgrade fails",
+      "required": true,
+      "type": "multiplechoice",
+      "variable": "auto_rollback",
+      "default": "yes",
+      "choices": [
+        "yes",
+        "no"
+      ]
+    },
+    {
+      "question_name": "API Maintenance Notice",
+      "question_description": "Minutes to notify before API node upgrade",
+      "required": true,
+      "type": "integer",
+      "variable": "api_notice_minutes",
+      "min": 0,
+      "max": 60,
+      "default": 30
+    },
+    {
+      "question_name": "Consensus Threshold Check",
+      "question_description": "Minimum consensus nodes required during upgrade (%)",
+      "required": true,
+      "type": "integer",
+      "variable": "min_consensus_threshold",
+      "min": 51,
+      "max": 100,
+      "default": 67
+    },
+    {
+      "question_name": "Upgrade Tags",
+      "question_description": "Specific components to upgrade",
+      "required": false,
+      "type": "multiselect",
+      "variable": "upgrade_tags",
+      "default": ["mitum", "monitoring"],
+      "choices": [
+        "mitum",
+        "mongodb",
+        "monitoring",
+        "configuration",
+        "dependencies"
+      ]
+    },
+    {
+      "question_name": "Dry Run",
+      "question_description": "Perform a dry run without actual changes",
+      "required": true,
+      "type": "multiplechoice",
+      "variable": "dry_run",
+      "default": "no",
+      "choices": [
+        "yes",
+        "no"
+      ]
+    },
+    {
+      "question_name": "Notification Recipients",
+      "question_description": "Additional email addresses for upgrade notifications",
+      "required": false,
+      "type": "textarea",
+      "variable": "notification_emails",
+      "default": "",
+      "min": 0,
+      "max": 500
+    }
+  ]
+}

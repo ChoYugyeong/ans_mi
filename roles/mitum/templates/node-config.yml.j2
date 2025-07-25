@@ -1,0 +1,92 @@
+---
+# Mitum node configuration
+# Generated for node {{ node_id }}
+
+address: {{ mitum_network_id }}{{ node_id }}sas
+privatekey: {{ node_keys.privatekey }}
+publickey: {{ node_keys.publickey }}
+network_id: {{ mitum_network_id }}
+
+network:
+  bind: 0.0.0.0:{{ mitum_node_port | default(4320 + node_id|int) }}
+  publish: {{ ansible_default_ipv4.address | default('localhost') }}:{{ mitum_node_port | default(4320 + node_id|int) }}
+  tls_insecure: true
+
+storage:
+  base: {{ mitum_data_dir }}/node-{{ node_id }}
+  blockdata_cachesize: {{ mitum_storage_cache_size | default(128) }}
+
+# Sync sources for multi-node setup
+{% if groups['mitum_nodes'] | length > 1 %}
+sync_sources:
+{% for host in groups['mitum_nodes'] %}
+{% if hostvars[host]['mitum_node_id'] | int != node_id | int %}
+  - type: sync-source-node
+    address: {{ mitum_network_id }}{{ hostvars[host]['mitum_node_id'] }}sas
+    publickey: {{ hostvars[host]['mitum_node_publickey'] | default(all_node_keys[hostvars[host]['mitum_node_id']|int].publickey) }}
+    publish: {{ hostvars[host]['ansible_default_ipv4']['address'] | default('localhost') }}:{{ hostvars[host]['mitum_node_port'] | default(4320 + hostvars[host]['mitum_node_id']|int) }}
+    tls_insecure: true
+{% endif %}
+{% endfor %}
+{% endif %}
+
+# API/Digest configuration (only for API nodes)
+{% if mitum_api_enabled | default(false) or (node_id|int >= (mitum_consensus_nodes | default(groups['mitum_nodes'] | length - 1))) %}
+digest:
+  network:
+    bind: http://0.0.0.0:{{ mitum_api_port | default(54320) }}
+    url: http://{{ ansible_default_ipv4.address | default('localhost') }}:{{ mitum_api_port | default(54320) }}
+    cors:
+      - "*"
+  database:
+    uri: {{ mitum_mongodb_uri | default('mongodb://localhost:27017/mitum') }}
+    database: {{ mitum_mongodb_database | default('mitum') }}
+  cache:
+    enabled: {{ mitum_digest_cache | default(true) }}
+{% endif %}
+
+# Parameters
+parameters:
+  misc:
+    max_message_size: {{ mitum_max_message_size | default(3000000) }}
+    object_cache_size: {{ mitum_object_cache_size | default(3000000) }}
+  
+  isaac:
+    threshold: {{ mitum_consensus.threshold | default(67) }}
+    interval_broadcast_ballot: {{ mitum_consensus.interval_broadcast_ballot | default('1.5s') }}
+    wait_preparing_init_ballot: {{ mitum_consensus.wait_preparing_init_ballot | default('3s') }}
+    wait_preparing_next_round_init_ballot: {{ mitum_consensus.wait_preparing_next_round_init_ballot | default('3s') }}
+    {% if mitum_consensus_nodes is defined and node_id|int < mitum_consensus_nodes %}
+    is_suffrage_node: true
+    {% endif %}
+  
+  network:
+    ratelimit:
+      default:
+        default: {{ mitum_ratelimit | default('nolimit') }}
+    
+    timeout:
+      dial: {{ mitum_network_timeout_dial | default('5s') }}
+      request: {{ mitum_network_timeout_request | default('30s') }}
+
+# Logging
+log:
+  level: {{ mitum_log_level | default('info') }}
+  format: {{ mitum_log_format | default('json') }}
+  {% if mitum_log_dir is defined %}
+  output: {{ mitum_log_dir }}/node-{{ node_id }}.log
+  {% endif %}
+
+# Metrics
+{% if mitum_metrics_enabled | default(false) %}
+metrics:
+  bind: 0.0.0.0:{{ mitum_metrics_port | default(9099 + node_id|int) }}
+{% endif %}
+
+# Local configuration
+local:
+  sync:
+    interval: {{ mitum_sync_interval | default('10s') }}
+  
+  blockdata:
+    mapsize: {{ mitum_blockdata_mapsize | default(10737418240) }}  # 10GB default

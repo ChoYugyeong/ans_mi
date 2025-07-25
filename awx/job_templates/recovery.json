@@ -1,0 +1,81 @@
+{
+  "name": "Mitum Node Recovery",
+  "description": "Automated recovery for failed Mitum nodes triggered by monitoring alerts",
+  "job_type": "run",
+  "inventory": "Mitum Production",
+  "project": "Mitum Ansible",
+  "playbook": "playbooks/recovery.yml",
+  "scm_branch": "",
+  "forks": 5,
+  "limit": "",
+  "verbosity": 2,
+  "extra_vars": "",
+  "job_tags": "",
+  "force_handlers": true,
+  "skip_tags": "",
+  "start_at_task": "",
+  "timeout": 1800,
+  "use_fact_cache": true,
+  "organization": "Mitum Operations",
+  "credentials": [
+    "Mitum SSH Key",
+    "Mitum Vault Password"
+  ],
+  "survey_enabled": false,
+  "ask_variables_on_launch": true,
+  "ask_limit_on_launch": true,
+  "ask_tags_on_launch": false,
+  "ask_skip_tags_on_launch": false,
+  "ask_job_type_on_launch": false,
+  "ask_verbosity_on_launch": true,
+  "ask_inventory_on_launch": false,
+  "ask_credential_on_launch": false,
+  "allow_simultaneous": true,
+  "launch_type": "webhook",
+  "webhook_service": "prometheus",
+  "webhook_credential": "Prometheus Webhook Token",
+  "notification_templates_started": [
+    "Slack Recovery Started"
+  ],
+  "notification_templates_success": [
+    "Slack Recovery Success"
+  ],
+  "notification_templates_error": [
+    "Slack Recovery Failed",
+    "Email Critical Alert",
+    "PagerDuty Escalation"
+  ],
+  "extra_vars": {
+    "recovery_action": "auto",
+    "target_nodes": "{{ alert_node | default('all') }}",
+    "alert_name": "{{ alert_name | default('manual_recovery') }}",
+    "alert_severity": "{{ alert_severity | default('warning') }}",
+    "recovery_options": {
+      "restart_service": true,
+      "check_consensus": true,
+      "resync_if_needed": true,
+      "backup_before_recovery": false,
+      "notify_on_start": true,
+      "notify_on_completion": true,
+      "max_recovery_attempts": 3,
+      "recovery_timeout": 600
+    },
+    "diagnostics": {
+      "collect_logs": true,
+      "check_disk_space": true,
+      "check_memory": true,
+      "check_network": true,
+      "check_mongodb": true
+    }
+  },
+  "labels": [
+    "recovery",
+    "automation",
+    "incident-response",
+    "critical"
+  ],
+  "instance_groups": ["primary"],
+  "job_slice_count": 1,
+  "execution_environment": null,
+  "prevent_instance_group_fallback": false
+}

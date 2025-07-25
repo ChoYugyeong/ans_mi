@@ -1,0 +1,117 @@
+---
+# Handlers for Mitum role
+
+- name: reload systemd
+  systemd:
+    daemon_reload: yes
+  become: yes
+
+- name: restart mitum service
+  systemd:
+    name: "{{ mitum_service_name }}"
+    state: restarted
+    enabled: yes
+  become: yes
+  when: 
+    - not (ansible_check_mode | default(false))
+    - mitum_service_state | default('started') == 'started'
+
+- name: reload mitum service
+  systemd:
+    name: "{{ mitum_service_name }}"
+    state: reloaded
+  become: yes
+  when: 
+    - not (ansible_check_mode | default(false))
+    - mitum_service_state | default('started') == 'started'
+  ignore_errors: yes
+
+- name: restart mongod
+  systemd:
+    name: mongod
+    state: restarted
+  become: yes
+  when: mitum_mongodb_enabled | default(true)
+
+- name: reload prometheus
+  systemd:
+    name: prometheus
+    state: reloaded
+  become: yes
+  when: mitum_prometheus_enabled | default(false)
+  delegate_to: "{{ groups['monitoring'][0] | default(inventory_hostname) }}"
+  run_once: yes
+
+- name: restart node_exporter
+  systemd:
+    name: node_exporter
+    state: restarted
+  become: yes
+  when: mitum_node_exporter_enabled | default(true)
+
+- name: restart mongodb_exporter
+  systemd:
+    name: mongodb_exporter
+    state: restarted
+  become: yes
+  when: 
+    - mitum_mongodb_enabled | default(true)
+    - mitum_mongodb_exporter_enabled | default(true)
+
+- name: verify mitum service
+  wait_for:
+    port: "{{ mitum_node_port }}"
+    host: "{{ ansible_default_ipv4.address }}"
+    state: started
+    timeout: 60
+  when: mitum_validate_startup | default(true)
+
+- name: check mitum health
+  uri:
+    url: "http://{{ ansible_default_ipv4.address }}:{{ mitum_node_port }}/v2/node"
+    status_code: 200
+    timeout: 10
+  retries: 5
+  delay: 5
+  register: health_check
+  until: health_check.status == 200
+  when: mitum_validate_startup | default(true)
+
+- name: reload logrotate
+  command: logrotate -f /etc/logrotate.d/mitum
+  become: yes
+  when: mitum_log_rotate_enabled | default(true)
+
+- name: update consensus nodes
+  uri:
+    url: "http://{{ ansible_default_ipv4.address }}:{{ mitum_node_port }}/v2/consensus/nodes"
+    method: POST
+    body_format: json
+    body: "{{ mitum_consensus_nodes }}"
+    status_code: [200, 201]
+  when: 
+    - mitum_consensus_nodes is defined
+    - mitum_consensus_nodes | length > 0
+  ignore_errors: yes
+
+- name: notify monitoring system
+  uri:
+    url: "{{ mitum_monitoring_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      event: "mitum_service_restarted"
+      node: "{{ inventory_hostname }}"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      details: "{{ mitum_restart_reason | default('Configuration change') }}"
+  when: 
+    - mitum_monitoring_webhook_url is defined
+    - mitum_monitoring_webhook_url | length > 0
+  delegate_to: localhost
+  run_once: yes
+
+- name: backup before restart
+  include_tasks: backup-node.yml
+  when: 
+    - mitum_upgrade_backup_before | default(false)
+    - mitum_restart_required | default(false)

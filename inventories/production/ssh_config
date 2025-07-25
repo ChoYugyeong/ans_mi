@@ -1,0 +1,35 @@
+# SSH configuration for production environment
+# Generated: Wed Jul 23 15:28:54 KST 2025
+
+Host bastion
+    HostName 3.34.138.191
+    User ubuntu
+    IdentityFile /Users/user/Desktop/mitum-ansible-deploy/mitum-ansible/keys/ssh/production/bastion.pem
+    ForwardAgent yes
+    ControlMaster auto
+    ControlPath ~/.ssh/mitum-%r@%h:%p
+    ControlPersist 30m
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+
+Host node0
+    HostName 192.168.50.88
+    User ubuntu
+    ProxyJump bastion
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+
+Host node1
+    HostName 192.168.50.89
+    User ubuntu
+    ProxyJump bastion
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+
+Host node2
+    HostName 192.168.50.90
+    User ubuntu
+    ProxyJump bastion
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+

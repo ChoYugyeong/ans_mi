@@ -1,0 +1,30 @@
+---
+- name: Test connectivity and setup
+  hosts: mitum_nodes
+  gather_facts: yes
+  tasks:
+    - name: Test connection
+      ping:
+    
+    - name: Show system info
+      debug:
+        msg: |
+          Hostname: {{ ansible_hostname }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          CPU: {{ ansible_processor_vcpus }} cores
+          Memory: {{ ansible_memtotal_mb }} MB
+    
+    - name: Check required tools
+      command: "{{ item }} --version"
+      loop:
+        - python3
+        - node
+        - jq
+      register: tool_versions
+      changed_when: false
+      failed_when: false
+    
+    - name: Display tool versions
+      debug:
+        msg: "{{ item.item }}: {{ item.stdout_lines[0] | default('Not installed') }}"
+      loop: "{{ tool_versions.results }}"

@@ -1,0 +1,78 @@
+---
+# Install MitumJS SDK for key generation
+
+- name: Create MitumJS installation directory
+  file:
+    path: "{{ mitum_install_dir }}/mitumjs"
+    state: directory
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0755'
+
+- name: Copy package.json for MitumJS
+  copy:
+    content: |
+      {
+        "name": "mitum-keygen-tool",
+        "version": "1.0.0",
+        "description": "Mitum key generation tool using MitumJS SDK",
+        "type": "module",
+        "dependencies": {
+          "@mitumjs/mitumjs": "{{ mitum_mitumjs_version | default('^2.1.15') }}"
+        }
+      }
+    dest: "{{ mitum_install_dir }}/mitumjs/package.json"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0644'
+
+- name: Install MitumJS SDK
+  become: yes
+  become_user: "{{ mitum_service_user }}"
+  npm:
+    path: "{{ mitum_install_dir }}/mitumjs"
+    production: yes
+  environment:
+    NODE_ENV: production
+    NPM_CONFIG_PREFIX: "{{ mitum_install_dir }}/mitumjs"
+  register: mitumjs_install
+
+- name: Copy key generation scripts
+  copy:
+    src: "{{ item }}"
+    dest: "{{ mitum_install_dir }}/mitumjs/"
+    owner: "{{ mitum_service_user }}"
+    group: "{{ mitum_service_group }}"
+    mode: '0755'
+  loop:
+    - mitum-config.sh
+    - mitum-keygen.js
+
+- name: Make scripts executable
+  file:
+    path: "{{ mitum_install_dir }}/mitumjs/{{ item }}"
+    mode: '0755'
+  loop:
+    - mitum-config.sh
+    - mitum-keygen.js
+
+- name: Test MitumJS installation
+  become: yes
+  become_user: "{{ mitum_service_user }}"
+  command: |
+    node -e "import('@mitumjs/mitumjs').then(m => console.log('MitumJS SDK v' + m.default.VERSION + ' installed successfully')).catch(e => process.exit(1))"
+  args:
+    chdir: "{{ mitum_install_dir }}/mitumjs"
+  register: mitumjs_test
+  changed_when: false
+
+- name: Display MitumJS installation status
+  debug:
+    msg: "{{ mitumjs_test.stdout }}"
+
+- name: Create symlink for mitum-config.sh
+  file:
+    src: "{{ mitum_install_dir }}/mitumjs/mitum-config.sh"
+    dest: /usr/local/bin/mitum-config
+    state: link
+  when: mitum_create_symlinks | default(true)

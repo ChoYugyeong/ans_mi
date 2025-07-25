@@ -1,0 +1,136 @@
+groups:
+  - name: mitum_alerts
+    interval: 30s
+    rules:
+      # Node availability
+      - alert: MitumNodeDown
+        expr: up{job="mitum"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "Mitum node {{ $labels.instance }} is down"
+          description: "Mitum node {{ $labels.instance }} has been down for more than 2 minutes"
+          awx_action: "restart_node"
+
+      # Consensus health
+      - alert: MitumConsensusAtRisk
+        expr: |
+          (count(up{job="mitum",node_type="consensus"} == 1) / 
+           count(up{job="mitum",node_type="consensus"})) * 100 < {{ mitum_consensus.threshold }}
+        for: 1m
+        labels:
+          severity: critical
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "Consensus at risk - below {{ mitum_consensus.threshold }}% threshold"
+          description: "Only {{ $value }}% of consensus nodes are healthy"
+          awx_action: "emergency_response"
+
+      # API node health
+      - alert: MitumAPINodeDown
+        expr: up{job="mitum",node_type="api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          network_id: "{{ mitum_network_id }}"
+          service_impact: high
+        annotations:
+          summary: "API service unavailable"
+          description: "Mitum API node is down, external services affected"
+          awx_action: "restart_api_node"
+
+      # Block production
+      - alert: MitumBlockProductionStalled
+        expr: rate(mitum_block_height[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "Block production has stalled"
+          description: "No new blocks produced in the last 5 minutes"
+          awx_action: "investigate_consensus"
+
+      # Resource usage
+      - alert: MitumHighCPU
+        expr: |
+          100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: MitumHighMemory
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: MitumDiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 5m
+        labels:
+          severity: warning
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Only {{ $value }}% disk space remaining on {{ $labels.instance }}"
+
+      # MongoDB health
+      - alert: MongoDBDown
+        expr: up{job="mongodb"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "MongoDB is down on {{ $labels.instance }}"
+          description: "MongoDB has been down for more than 2 minutes"
+
+      # Network connectivity
+      - alert: MitumNodeDisconnected
+        expr: mitum_peers_connected < 1
+        for: 3m
+        labels:
+          severity: warning
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "Node {{ $labels.instance }} has no peers"
+          description: "Node is isolated from the network"
+
+      # Upgrade monitoring
+      - alert: MitumVersionMismatch
+        expr: |
+          count(count by (version) (mitum_node_info)) > 1
+        for: 10m
+        labels:
+          severity: warning
+          network_id: "{{ mitum_network_id }}"
+        annotations:
+          summary: "Multiple Mitum versions detected"
+          description: "Nodes are running different versions, upgrade may be in progress"
+
+# AWX webhook configuration
+- name: awx_automation
+  interval: 1m
+  rules:
+    - alert: AWXAutomationTrigger
+      expr: |
+        ALERTS{alertname=~"MitumNodeDown|MitumAPINodeDown|MitumConsensusAtRisk",alertstate="firing"}
+      labels:
+        awx_webhook: enabled
+        job_template: "{{ awx_recovery_job_template | default('mitum-recovery') }}"
+      annotations:
+        webhook_url: "{{ awx_webhook_url }}"
+        auth_token: "{{ awx_webhook_token }}"

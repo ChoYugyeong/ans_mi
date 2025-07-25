@@ -1,0 +1,105 @@
+---
+# Automated recovery playbook for AWX
+
+- name: Mitum node recovery
+  hosts: "{{ target_nodes | default('mitum_nodes') }}"
+  become: yes
+  gather_facts: yes
+  vars:
+    recovery_action: "{{ recovery_action | default('restart') }}"
+    
+  tasks:
+    - name: Check node health
+      uri:
+        url: "http://localhost:{{ mitum_node_port }}/v2/node"
+        timeout: 5
+      register: health_check
+      failed_when: false
+      
+    - name: Determine recovery strategy
+      set_fact:
+        needs_recovery: "{{ health_check.status != 200 }}"
+        recovery_reason: "{{ health_check.msg | default('Unknown') }}"
+        
+    - name: Log recovery attempt
+      lineinfile:
+        path: /var/log/mitum-recovery.log
+        line: "[{{ ansible_date_time.iso8601 }}] Recovery attempt - Node: {{ inventory_hostname }}, Reason: {{ recovery_reason }}"
+        create: yes
+        
+    - name: Execute recovery based on action
+      block:
+        - name: Restart service
+          when: recovery_action == 'restart'
+          systemd:
+            name: mitum
+            state: restarted
+            
+        - name: Full node recovery
+          when: recovery_action == 'full'
+          block:
+            - name: Stop services
+              systemd:
+                name: "{{ item }}"
+                state: stopped
+              loop:
+                - mitum
+                - mongod
+                
+            - name: Clear temporary data
+              file:
+                path: "{{ mitum_data_dir }}/tmp"
+                state: absent
+                
+            - name: Start services
+              systemd:
+                name: "{{ item }}"
+                state: started
+              loop:
+                - mongod
+                - mitum
+                
+        - name: Resync from network
+          when: recovery_action == 'resync'
+          block:
+            - name: Stop Mitum
+              systemd:
+                name: mitum
+                state: stopped
+                
+            - name: Remove block data
+              file:
+                path: "{{ mitum_data_dir }}/blockdata"
+                state: absent
+                
+            - name: Start Mitum
+              systemd:
+                name: mitum
+                state: started
+      when: needs_recovery
+      
+    - name: Wait for recovery
+      when: needs_recovery
+      block:
+        - name: Wait for service
+          wait_for:
+            port: "{{ mitum_node_port }}"
+            timeout: 60
+            
+        - name: Verify recovery
+          uri:
+            url: "http://localhost:{{ mitum_node_port }}/v2/node"
+            status_code: 200
+          retries: 30
+          delay: 5
+          register: recovery_check
+          
+    - name: Report recovery status
+      set_stats:
+        data:
+          recovery_results:
+            - node: "{{ inventory_hostname }}"
+              recovered: "{{ recovery_check.status == 200 if needs_recovery else 'N/A' }}"
+              action: "{{ recovery_action }}"
+              timestamp: "{{ ansible_date_time.iso8601 }}"
+        aggregate: yes

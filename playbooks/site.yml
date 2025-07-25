@@ -1,0 +1,173 @@
+---
+# Main Site Playbook for Mitum Deployment
+# Version: 4.0.0 - Enhanced with pre/post checks and modular structure
+#
+# This playbook orchestrates the entire Mitum blockchain deployment.
+# 
+# Execution order:
+# 1. Pre-flight checks
+# 2. System preparation
+# 3. MongoDB installation and configuration
+# 4. Mitum key generation
+# 5. Mitum node deployment
+# 6. Monitoring setup (optional)
+# 7. Post-deployment validation
+#
+# Usage:
+# ansible-playbook -i inventories/production/hosts.yml playbooks/site.yml
+#
+# Execute specific stages only:
+# ansible-playbook -i inventories/production/hosts.yml playbooks/site.yml --tags prepare
+#
+# Dry run (preview changes):
+# ansible-playbook -i inventories/production/hosts.yml playbooks/site.yml --check
+
+# === Set Deployment Metadata ===
+- name: Set deployment metadata
+  hosts: all
+  gather_facts: no
+  tags: [always]
+  tasks:
+    - name: Set deployment ID and timestamp
+      set_fact:
+        deployment_id: "{{ deployment_id | default(lookup('pipe', 'date +%Y%m%d-%H%M%S')) }}"
+        deployment_timestamp: "{{ ansible_date_time.iso8601 }}"
+        deployment_user: "{{ lookup('env', 'USER') }}"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display deployment information
+      debug:
+        msg: |
+          ========================================
+          Mitum Deployment Started
+          ========================================
+          Deployment ID: {{ deployment_id }}
+          Environment: {{ mitum_environment }}
+          Network ID: {{ mitum_network_id }}
+          Model Type: {{ mitum_model_type }}
+          User: {{ deployment_user }}
+          Timestamp: {{ deployment_timestamp }}
+          ========================================
+      run_once: true
+
+# === 1. Pre-deployment Validation ===
+- name: Pre-deployment validation
+  import_playbook: pre-deploy-check.yml
+  tags: [precheck, validation]
+
+# === 2. System Preparation ===
+- name: Prepare systems
+  import_playbook: prepare-system.yml
+  tags: [prepare, system]
+  when: not skip_prepare | default(false)
+
+# === 3. SSH Host Key Collection (Security) ===
+- name: Gather SSH host keys
+  import_playbook: gather-host-keys.yml
+  tags: [security, ssh]
+  when: strict_host_key_checking | default(true)
+
+# === 4. MongoDB Installation ===
+- name: Setup MongoDB
+  import_playbook: setup-mongodb.yml
+  tags: [mongodb, database]
+  when: not skip_mongodb | default(false)
+
+# === 5. Key Generation ===
+- name: Generate Mitum keys
+  import_playbook: keygen.yml
+  tags: [keygen, keys]
+  when: not skip_keygen | default(false)
+
+# === 6. Mitum Deployment ===
+- name: Deploy Mitum nodes
+  import_playbook: deploy-mitum.yml
+  tags: [deploy, mitum]
+
+# === 7. Monitoring Setup (Optional) ===
+- name: Setup monitoring
+  import_playbook: setup-monitoring.yml
+  tags: [monitoring]
+  when: 
+    - mitum_monitoring.enabled | default(false)
+    - groups['monitoring'] is defined
+    - groups['monitoring'] | length > 0
+
+# === 8. Backup Configuration ===
+- name: Configure backup
+  import_playbook: setup-backup.yml
+  tags: [backup]
+  when: mitum_backup.enabled | default(false)
+
+# === 9. Post-deployment Validation ===
+- name: Post-deployment validation
+  import_playbook: post-deploy-check.yml
+  tags: [postcheck, validation]
+
+# === 10. Deployment Summary ===
+- name: Deployment summary
+  hosts: localhost
+  gather_facts: no
+  tags: [always]
+  tasks:
+    - name: Generate deployment report
+      template:
+        src: deployment-report.j2
+        dest: "{{ playbook_dir }}/../reports/deployment-{{ deployment_id }}.txt"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Display deployment summary
+      debug:
+        msg: |
+          ========================================
+          Mitum Deployment Complete!
+          ========================================
+          Deployment ID: {{ deployment_id }}
+          Duration: {{ (ansible_date_time.epoch | int) - (deployment_start_time | default(ansible_date_time.epoch) | int) }} seconds
+          
+          Nodes Deployed: {{ groups['mitum_nodes'] | length }}
+          - Consensus: {{ groups['mitum_nodes'] | select('match', '.*consensus.*') | list | length }}
+          - API/Syncer: {{ groups['mitum_nodes'] | select('match', '.*api.*') | list | length }}
+          
+          Services Status:
+          - MongoDB: {{ mongodb_status | default('Unknown') }}
+          - Mitum: {{ mitum_status | default('Unknown') }}
+          - Monitoring: {{ monitoring_status | default('N/A') }}
+          
+          Next Steps:
+          1. Check status: make status
+          2. View logs: make logs
+          3. Access API: curl http://<api-node>:{{ mitum_api_port }}/v2/node
+          
+          Report saved to: reports/deployment-{{ deployment_id }}.txt
+          ========================================
+      run_once: true
+
+# === Error Handling ===
+- name: Deployment failure handler
+  hosts: all
+  gather_facts: no
+  tags: [always]
+  tasks:
+    - name: Deployment failed notification
+      debug:
+        msg: |
+          ========================================
+          DEPLOYMENT FAILED!
+          ========================================
+          Error in: {{ ansible_failed_task.name | default('Unknown task') }}
+          Host: {{ ansible_hostname | default('Unknown host') }}
+          
+          Please check:
+          1. Ansible logs: logs/ansible.log
+          2. Host connectivity: make test
+          3. Requirements: make validate
+          
+          Rollback instructions:
+          1. Restore from backup: make restore BACKUP_TIMESTAMP=<timestamp>
+          2. Or clean install: make clean-data && make deploy
+          ========================================
+      when: ansible_failed_task is defined
+      run_once: true

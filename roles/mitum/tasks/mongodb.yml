@@ -1,0 +1,337 @@
+---
+# MongoDB installation and configuration for Mitum
+
+- name: MongoDB Setup
+  block:
+    - name: Check if MongoDB is already installed
+      stat:
+        path: /usr/bin/mongod
+      register: mongodb_installed
+      tags:
+        - mongodb
+        - mongodb-check
+
+    - name: Add MongoDB GPG key
+      apt_key:
+        url: https://www.mongodb.org/static/pgp/server-7.0.asc
+        state: present
+      when: 
+        - not mongodb_installed.stat.exists
+        - mitum_mongodb_install_method == 'native'
+      tags:
+        - mongodb
+        - mongodb-install
+
+    - name: Add MongoDB repository
+      apt_repository:
+        repo: "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu {{ ansible_distribution_release }}/mongodb-org/7.0 multiverse"
+        state: present
+        update_cache: yes
+      when: 
+        - not mongodb_installed.stat.exists
+        - mitum_mongodb_install_method == 'native'
+      tags:
+        - mongodb
+        - mongodb-install
+
+    - name: Install MongoDB packages
+      apt:
+        name:
+          - mongodb-org
+          - mongodb-org-server
+          - mongodb-org-shell
+          - mongodb-org-mongos
+          - mongodb-org-tools
+        state: present
+      when: 
+        - not mongodb_installed.stat.exists
+        - mitum_mongodb_install_method == 'native'
+      tags:
+        - mongodb
+        - mongodb-install
+
+    - name: Create MongoDB directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: '0755'
+      loop:
+        - /data/db
+        - /data/configdb
+        - /var/log/mongodb
+        - /var/run/mongodb
+      tags:
+        - mongodb
+        - mongodb-dirs
+
+    - name: Generate MongoDB keyfile for replica set
+      shell: |
+        openssl rand -base64 756 > {{ mitum_mongodb_keyfile }}
+        chmod 400 {{ mitum_mongodb_keyfile }}
+        chown mongodb:mongodb {{ mitum_mongodb_keyfile }}
+      args:
+        creates: "{{ mitum_mongodb_keyfile }}"
+      when: mitum_mongodb_auth_enabled
+      tags:
+        - mongodb
+        - mongodb-keyfile
+
+    - name: Create MongoDB configuration file
+      template:
+        src: mongod.conf.j2
+        dest: /etc/mongod.conf
+        owner: root
+        group: root
+        mode: '0644'
+        backup: yes
+      notify: restart mongodb
+      tags:
+        - mongodb
+        - mongodb-config
+
+    - name: Start and enable MongoDB service
+      systemd:
+        name: mongod
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      register: mongodb_started
+      tags:
+        - mongodb
+        - mongodb-service
+
+    - name: Wait for MongoDB to be ready
+      wait_for:
+        port: "{{ mitum_mongodb_port }}"
+        host: "{{ mitum_mongodb_bind_ip }}"
+        delay: 5
+        timeout: 60
+      tags:
+        - mongodb
+        - mongodb-wait
+
+    - name: Check if replica set is already initialized
+      shell: |
+        mongosh --quiet --eval "rs.status().ok" || echo "0"
+      register: rs_status
+      changed_when: false
+      tags:
+        - mongodb
+        - mongodb-replica
+
+    - name: Initialize MongoDB replica set
+      shell: |
+        mongosh --eval '
+        rs.initiate({
+          _id: "{{ mitum_mongodb_replica_set }}",
+          members: [
+            { _id: 0, host: "{{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }}" }
+          ]
+        })'
+      when: rs_status.stdout == "0"
+      register: rs_init_result
+      tags:
+        - mongodb
+        - mongodb-replica
+
+    - name: Wait for PRIMARY state
+      shell: |
+        mongosh --quiet --eval "rs.status().myState"
+      register: rs_state
+      until: rs_state.stdout == "1"
+      retries: 30
+      delay: 2
+      when: rs_init_result is changed
+      tags:
+        - mongodb
+        - mongodb-replica
+
+    - name: Create MongoDB admin user
+      shell: |
+        mongosh admin --eval '
+        db.createUser({
+          user: "{{ mitum_mongodb_admin_user }}",
+          pwd: "{{ mitum_mongodb_admin_password }}",
+          roles: [
+            { role: "userAdminAnyDatabase", db: "admin" },
+            { role: "dbAdminAnyDatabase", db: "admin" },
+            { role: "readWriteAnyDatabase", db: "admin" },
+            { role: "clusterAdmin", db: "admin" }
+          ]
+        })'
+      when: 
+        - mitum_mongodb_auth_enabled
+        - rs_state.stdout == "1"
+      no_log: true
+      ignore_errors: yes  # User might already exist
+      tags:
+        - mongodb
+        - mongodb-auth
+
+    - name: Create Mitum database and user
+      shell: |
+        mongosh -u "{{ mitum_mongodb_admin_user }}" -p "{{ mitum_mongodb_admin_password }}" --authenticationDatabase admin --eval '
+        use mitum;
+        db.createUser({
+          user: "{{ mitum_mongodb_user }}",
+          pwd: "{{ mitum_mongodb_password }}",
+          roles: [
+            { role: "readWrite", db: "mitum" },
+            { role: "dbAdmin", db: "mitum" }
+          ]
+        })'
+      when: 
+        - mitum_mongodb_auth_enabled
+        - rs_state.stdout == "1"
+      no_log: true
+      ignore_errors: yes  # User might already exist
+      tags:
+        - mongodb
+        - mongodb-auth
+
+  rescue:
+    - name: MongoDB setup failed
+      debug:
+        msg: |
+          MongoDB setup encountered an error: {{ ansible_failed_result.msg }}
+          Please check the logs at /var/log/mongodb/mongod.log
+      tags:
+        - mongodb
+        - mongodb-error
+
+- name: MongoDB Docker Setup (Alternative)
+  block:
+    - name: Pull MongoDB Docker image
+      docker_image:
+        name: "mongo:{{ mitum_mongodb_version }}"
+        source: pull
+      when: mitum_mongodb_install_method == 'docker'
+      tags:
+        - mongodb
+        - mongodb-docker
+
+    - name: Create Docker volumes for MongoDB
+      docker_volume:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - mitum_mongodb_data
+        - mitum_mongodb_config
+        - mitum_mongodb_logs
+      when: mitum_mongodb_install_method == 'docker'
+      tags:
+        - mongodb
+        - mongodb-docker
+
+    - name: Copy MongoDB configuration for Docker
+      copy:
+        content: |
+          storage:
+            dbPath: /data/db
+          systemLog:
+            destination: file
+            path: /var/log/mongodb/mongod.log
+            logAppend: true
+          net:
+            port: {{ mitum_mongodb_port }}
+            bindIp: 0.0.0.0
+          security:
+            authorization: {{ 'enabled' if mitum_mongodb_auth_enabled else 'disabled' }}
+          replication:
+            replSetName: "{{ mitum_mongodb_replica_set }}"
+        dest: /tmp/mongod-docker.conf
+      when: mitum_mongodb_install_method == 'docker'
+      tags:
+        - mongodb
+        - mongodb-docker
+
+    - name: Run MongoDB container
+      docker_container:
+        name: mitum-mongodb
+        image: "mongo:{{ mitum_mongodb_version }}"
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "{{ mitum_mongodb_port }}:{{ mitum_mongodb_port }}"
+        volumes:
+          - mitum_mongodb_data:/data/db
+          - mitum_mongodb_config:/data/configdb
+          - mitum_mongodb_logs:/var/log/mongodb
+          - /tmp/mongod-docker.conf:/etc/mongod.conf:ro
+        command: ["mongod", "--config", "/etc/mongod.conf"]
+        env:
+          MONGO_INITDB_ROOT_USERNAME: "{{ mitum_mongodb_admin_user if mitum_mongodb_auth_enabled else '' }}"
+          MONGO_INITDB_ROOT_PASSWORD: "{{ mitum_mongodb_admin_password if mitum_mongodb_auth_enabled else '' }}"
+      when: mitum_mongodb_install_method == 'docker'
+      tags:
+        - mongodb
+        - mongodb-docker
+
+    - name: Wait for MongoDB container to be ready
+      wait_for:
+        port: "{{ mitum_mongodb_port }}"
+        host: localhost
+        delay: 10
+        timeout: 60
+      when: mitum_mongodb_install_method == 'docker'
+      tags:
+        - mongodb
+        - mongodb-docker
+
+    - name: Initialize replica set in Docker
+      docker_container_exec:
+        container: mitum-mongodb
+        command: |
+          mongosh --eval '
+          rs.initiate({
+            _id: "{{ mitum_mongodb_replica_set }}",
+            members: [
+              { _id: 0, host: "127.0.0.1:{{ mitum_mongodb_port }}" }
+            ]
+          })'
+      when: mitum_mongodb_install_method == 'docker'
+      register: docker_rs_init
+      ignore_errors: yes
+      tags:
+        - mongodb
+        - mongodb-docker
+
+- name: Verify MongoDB connectivity for Mitum
+  block:
+    - name: Test MongoDB connection
+      shell: |
+        {% if mitum_mongodb_auth_enabled %}
+        mongosh -u "{{ mitum_mongodb_user }}" -p "{{ mitum_mongodb_password }}" \
+          --authenticationDatabase mitum \
+          --host {{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }} \
+          --eval "db.runCommand('ping')"
+        {% else %}
+        mongosh --host {{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }} \
+          --eval "db.runCommand('ping')"
+        {% endif %}
+      register: mongodb_ping
+      changed_when: false
+      tags:
+        - mongodb
+        - mongodb-verify
+
+    - name: Display MongoDB connection status
+      debug:
+        msg: "MongoDB is {{ 'connected and ready' if mongodb_ping.rc == 0 else 'not accessible' }}"
+      tags:
+        - mongodb
+        - mongodb-verify
+
+    - name: Set MongoDB connection fact for Mitum
+      set_fact:
+        mitum_mongodb_uri: >-
+          {% if mitum_mongodb_auth_enabled %}
+          mongodb://{{ mitum_mongodb_user }}:{{ mitum_mongodb_password }}@{{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }}/mitum?replicaSet={{ mitum_mongodb_replica_set }}
+          {% else %}
+          mongodb://{{ mitum_mongodb_bind_ip }}:{{ mitum_mongodb_port }}/mitum?replicaSet={{ mitum_mongodb_replica_set }}
+          {% endif %}
+      tags:
+        - mongodb
+        - mongodb-verify

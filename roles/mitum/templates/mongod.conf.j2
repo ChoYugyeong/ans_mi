@@ -1,0 +1,48 @@
+# MongoDB configuration for Mitum
+# {{ ansible_managed }}
+
+storage:
+  dbPath: {{ mitum_mongodb_data_path }}
+  journal:
+    enabled: true
+  directoryPerDB: {{ mitum_mongodb_directory_per_db | default(false) }}
+  engine: wiredTiger
+  wiredTiger:
+    engineConfig:
+      cacheSizeGB: {{ mitum_mongodb_cache_size_gb | default(1) }}
+
+systemLog:
+  destination: file
+  path: {{ mitum_mongodb_log_path }}/mongod.log
+  logAppend: true
+  logRotate: reopen
+  timeStampFormat: iso8601-local
+  verbosity: {{ mitum_mongodb_log_verbosity | default(0) }}
+
+net:
+  port: {{ mitum_mongodb_port }}
+  bindIp: {{ mitum_mongodb_bind_ip }}
+  maxIncomingConnections: {{ mitum_mongodb_max_connections | default(65536) }}
+
+security:
+  authorization: {{ 'enabled' if mitum_mongodb_auth_enabled else 'disabled' }}
+{% if mitum_mongodb_auth_enabled and mitum_mongodb_keyfile is defined %}
+  keyFile: {{ mitum_mongodb_keyfile }}
+{% endif %}
+
+replication:
+  replSetName: "{{ mitum_mongodb_replica_set }}"
+  oplogSizeMB: {{ mitum_mongodb_oplog_size_mb | default(1024) }}
+
+processManagement:
+  fork: {{ 'false' if mitum_mongodb_install_method == 'docker' else 'true' }}
+  pidFilePath: {{ mitum_mongodb_pid_file }}
+  timeZoneInfo: /usr/share/zoneinfo
+
+# Performance tuning
+operationProfiling:
+  mode: {{ mitum_mongodb_profiling_mode | default('off') }}
+  slowOpThresholdMs: {{ mitum_mongodb_slow_op_threshold | default(100) }}
+
+setParameter:
+  enableLocalhostAuthBypass: {{ 'true' if not mitum_mongodb_auth_enabled else 'false' }}
