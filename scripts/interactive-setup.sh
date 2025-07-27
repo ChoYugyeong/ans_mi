@@ -5,7 +5,7 @@
 
 set -e
 
-# 색상 정의
+# Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -14,7 +14,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# 이모지와 함께 출력하는 함수들
+# Functions to print with emojis
 print_header() {
     echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}🎯 $1${NC}"
@@ -41,7 +41,7 @@ print_question() {
     echo -e "${MAGENTA}❓ $1${NC}"
 }
 
-# 대시보드 출력
+# Dashboard display
 show_dashboard() {
     clear
     echo -e "${CYAN}"
@@ -54,12 +54,12 @@ show_dashboard() {
                                                                                          
 EOF
     echo -e "${NC}"
-    echo -e "${GREEN}🎉 Mitum 블록체인 배포 자동화 시스템에 오신 것을 환영합니다!${NC}"
-    echo -e "${BLUE}📖 이 스크립트는 초기 설정을 도와드립니다.${NC}"
+    echo -e "${GREEN}🎉 Mitum blockchain deployment automation system welcomes you!${NC}"
+    echo -e "${BLUE}📖 This script helps you with initial setup.${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
 
-# 프로그레스 바 표시
+# Progress bar display
 show_progress() {
     local current=$1
     local total=$2
@@ -73,44 +73,44 @@ show_progress() {
     printf "] %d%%" $percentage
 }
 
-# 환경 선택
+# Environment selection
 select_environment() {
-    print_header "환경 선택"
-    echo "어떤 환경을 설정하시겠습니까?"
+    print_header "Environment Selection"
+    echo "Which environment would you like to set up?"
     echo
-    echo "  1) 🏗️  Development (개발 환경)"
-    echo "  2) 🧪 Staging (스테이징 환경)"
-    echo "  3) 🚀 Production (프로덕션 환경)"
+    echo "  1) 🏗️  Development (Development Environment)"
+    echo "  2) 🧪 Staging (Staging Environment)"
+    echo "  3) 🚀 Production (Production Environment)"
     echo
     
     while true; do
-        print_question "선택해주세요 (1-3): "
+        print_question "Please select (1-3): "
         read -r env_choice
         
         case $env_choice in
             1)
                 ENVIRONMENT="development"
-                print_success "개발 환경을 선택하셨습니다."
+                print_success "You have selected the development environment."
                 break
                 ;;
             2)
                 ENVIRONMENT="staging"
-                print_success "스테이징 환경을 선택하셨습니다."
+                print_success "You have selected the staging environment."
                 break
                 ;;
             3)
                 ENVIRONMENT="production"
-                print_warning "프로덕션 환경을 선택하셨습니다. 신중하게 진행해주세요!"
+                print_warning "You have selected the production environment. Please proceed with caution!"
                 break
                 ;;
             *)
-                print_error "잘못된 선택입니다. 1-3 중에서 선택해주세요."
+                print_error "Invalid selection. Please choose between 1-3."
                 ;;
         esac
     done
 }
 
-# 노드 수 입력
+# Input node count
 input_node_count() {
     print_header "Node Configuration"
     echo "How many nodes would you like to configure?"
@@ -151,36 +151,36 @@ configure_network() {
     print_success "Chain ID: $CHAIN_ID"
 }
 
-# SSH 설정
+# SSH settings
 configure_ssh() {
-    print_header "SSH 연결 설정"
+    print_header "SSH Connection Settings"
     
-    print_question "SSH 키를 자동으로 생성하시겠습니까? (Y/n): "
+    print_question "Would you like to generate SSH keys automatically? (Y/n): "
     read -r generate_ssh
     
     if [[ "$generate_ssh" != "n" && "$generate_ssh" != "N" ]]; then
-        print_info "SSH 키를 생성합니다..."
+        print_info "Generating SSH keys..."
         
         SSH_KEY_PATH="keys/ssh/$ENVIRONMENT/mitum_key"
         mkdir -p "keys/ssh/$ENVIRONMENT"
         
         if [ ! -f "$SSH_KEY_PATH" ]; then
             ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -N "" -q
-            print_success "SSH 키가 생성되었습니다: $SSH_KEY_PATH"
+            print_success "SSH keys have been generated: $SSH_KEY_PATH"
         else
-            print_warning "SSH 키가 이미 존재합니다: $SSH_KEY_PATH"
+            print_warning "SSH keys already exist: $SSH_KEY_PATH"
         fi
     else
-        print_info "기존 SSH 키를 사용합니다."
-        print_question "SSH 키 경로를 입력해주세요: "
+        print_info "Using existing SSH keys."
+        print_question "Please enter the SSH key path: "
         read -r ssh_key_path
         SSH_KEY_PATH=$ssh_key_path
     fi
 }
 
-# 인벤토리 생성
+# Inventory generation
 create_inventory() {
-    print_header "인벤토리 파일 생성"
+    print_header "Inventory File Generation"
     
     INVENTORY_FILE="inventories/$ENVIRONMENT/hosts.yml"
     mkdir -p "inventories/$ENVIRONMENT/group_vars"
@@ -188,8 +188,8 @@ create_inventory() {
     
     cat > "$INVENTORY_FILE" << EOF
 ---
-# $ENVIRONMENT 환경 인벤토리
-# 자동 생성: $(date)
+# $ENVIRONMENT Environment Inventory
+# Auto-generated: $(date)
 
 all:
   vars:
@@ -197,7 +197,7 @@ all:
     ansible_ssh_private_key_file: ../../$SSH_KEY_PATH
     ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
     
-    # Mitum 설정
+    # Mitum Settings
     mitum_environment: $ENVIRONMENT
     mitum_network_id: $NETWORK_ID
     mitum_chain_id: $CHAIN_ID
@@ -206,11 +206,11 @@ mitum_nodes:
   hosts:
 EOF
     
-    # 노드 추가
+    # Add nodes
     for i in $(seq 1 "$node_count"); do
         echo "    node$((i-1)):" >> "$INVENTORY_FILE"
         
-        print_question "node$((i-1))의 IP 주소를 입력해주세요: "
+        print_question "Please enter the IP address for node$((i-1)): "
         read -r node_ip
         
         echo "      ansible_host: $node_ip" >> "$INVENTORY_FILE"
@@ -223,18 +223,18 @@ EOF
         echo >> "$INVENTORY_FILE"
     done
     
-    print_success "인벤토리 파일이 생성되었습니다: $INVENTORY_FILE"
+    print_success "Inventory file has been generated: $INVENTORY_FILE"
 }
 
-# 검증
+# Validation
 validate_setup() {
-    print_header "설정 검증"
+    print_header "Setup Validation"
     
-    echo "설정을 검증하는 중..."
+    echo "Validating settings..."
     echo
     
-    # 프로그레스 바 표시
-    items=("Python 버전" "Ansible 설치" "SSH 키" "인벤토리 파일" "네트워크 연결")
+    # Progress bar display
+    items=("Python Version" "Ansible Installation" "SSH Keys" "Inventory File" "Network Connection")
     total=${#items[@]}
     
     for i in "${!items[@]}"; do
@@ -246,53 +246,53 @@ validate_setup() {
             1) [ -f "venv/bin/ansible" ] && status="✅" || status="❌" ;;
             2) [ -f "$SSH_KEY_PATH" ] && status="✅" || status="❌" ;;
             3) [ -f "$INVENTORY_FILE" ] && status="✅" || status="❌" ;;
-            4) status="✅" ;; # 네트워크는 나중에 실제로 테스트
+            4) status="✅" ;; # Network connection will be tested later
         esac
     done
     
     echo -e "\n"
-    print_success "검증 완료!"
+    print_success "Validation complete!"
 }
 
-# 다음 단계 안내
+# Next steps guidance
 show_next_steps() {
-    print_header "🎉 설정 완료!"
+    print_header "🎉 Setup Complete!"
     
-    echo -e "${GREEN}축하합니다! 초기 설정이 완료되었습니다.${NC}"
+    echo -e "${GREEN}Congratulations! Initial setup is complete.${NC}"
     echo
-    echo -e "${CYAN}📋 설정 요약:${NC}"
-    echo "  • 환경: $ENVIRONMENT"
-    echo "  • 노드 수: $node_count"
-    echo "  • 네트워크 ID: $NETWORK_ID"
-    echo "  • 체인 ID: $CHAIN_ID"
+    echo -e "${CYAN}Setup Summary:${NC}"
+    echo "  • Environment: $ENVIRONMENT"
+    echo "  • Number of Nodes: $node_count"
+    echo "  • Network ID: $NETWORK_ID"
+    echo "  • Chain ID: $CHAIN_ID"
     echo
-    echo -e "${YELLOW}🚀 다음 단계:${NC}"
+    echo -e "${YELLOW}Next Steps:${NC}"
     echo
-    echo "1. 가상 환경 활성화:"
+    echo "1. Activate Virtual Environment:"
     echo -e "   ${BLUE}source venv/bin/activate${NC}"
     echo
-    echo "2. 연결 테스트:"
+    echo "2. Test Connection:"
     echo -e "   ${BLUE}make test ENV=$ENVIRONMENT${NC}"
     echo
-    echo "3. 시스템 준비:"
+    echo "3. System Preparation:"
     echo -e "   ${BLUE}make prepare ENV=$ENVIRONMENT${NC}"
     echo
-    echo "4. Mitum 배포:"
+    echo "4. Mitum Deployment:"
     echo -e "   ${BLUE}make deploy ENV=$ENVIRONMENT${NC}"
     echo
-    echo -e "${GREEN}💡 도움이 필요하시면 'make help'를 실행해주세요.${NC}"
+    echo -e "${GREEN}💡 If you need help, please run 'make help'.${NC}"
     echo
 }
 
-# 메인 실행
+# Main execution
 main() {
     show_dashboard
     
-    print_question "설정을 시작하시겠습니까? (Y/n): "
+    print_question "Would you like to start the setup? (Y/n): "
     read -r confirm
     
     if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
-        print_info "설정을 취소했습니다."
+        print_info "Setup cancelled."
         exit 0
     fi
     
@@ -304,7 +304,7 @@ main() {
     validate_setup
     show_next_steps
     
-    # 설정 저장
+    # Save settings
     cat > ".last_setup" << EOF
 ENVIRONMENT=$ENVIRONMENT
 NODE_COUNT=$node_count
@@ -314,5 +314,5 @@ SETUP_DATE=$(date)
 EOF
 }
 
-# 스크립트 실행
+# Script execution
 main 

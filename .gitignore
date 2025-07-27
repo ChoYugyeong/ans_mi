@@ -1,11 +1,11 @@
 # Mitum Ansible - Optimized .gitignore
 # Version: 5.0.0
 #
-# 이 파일은 다음을 제외합니다:
-# 1. 시스템 파일들 (.DS_Store, Thumbs.db 등)
-# 2. 보안 관련 파일들 (키, 비밀번호 등)
-# 3. 임시 파일들 (캐시, 로그 등)
-# 4. 개발 환경 파일들
+# This file excludes:
+# 1. System files (.DS_Store, Thumbs.db, etc.)
+# 2. Security-related files (keys, passwords, etc.)
+# 3. Temporary files (cache, logs, etc.)
+# 4. Development environment files
 
 # === System Files ===
 # macOS
