@@ -1,0 +1,79 @@
+# Generated Mitum Inventory for {{ environment }} Environment
+# Generated at: {{ ansible_date_time.iso8601 }}
+# Network ID: {{ network_id }}
+# Model: {{ model_type }}
+# Node Count: {{ node_count }}
+
+all:
+  children:
+    bastion:
+      hosts:
+        bastion:
+          ansible_host: {{ bastion_ip }}
+          ansible_user: {{ username }}
+          ansible_ssh_private_key_file: keys/ssh/{{ environment }}/bastion.pem
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    
+    mitum_nodes:
+      hosts:
+{% for ip in nodes %}
+        node{{ loop.index0 }}:
+          ansible_host: {{ ip }}
+          ansible_user: {{ username }}
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -W %h:%p -q {{ username }}@{{ bastion_ip }} -i keys/ssh/{{ environment }}/bastion.pem"'
+          ansible_ssh_private_key_file: keys/ssh/{{ environment }}/nodes.pem
+          mitum_node_id: {{ loop.index0 }}
+          mitum_node_port: {{ 4320 + loop.index0 }}
+{% if loop.index0 < consensus_nodes %}
+          mitum_api_enabled: false
+          mitum_node_type: "consensus"
+{% else %}
+          mitum_api_enabled: true
+          mitum_api_port: 54320
+          mitum_node_type: "api"
+{% endif %}
+
+{% endfor %}
+
+      vars:
+        mitum_network_id: "{{ network_id }}"
+        mitum_model_type: "{{ model_type }}"
+        mitum_environment: "{{ environment }}"
+        mitum_bind_host: "0.0.0.0"
+        mitum_mongodb_replica_set: "mitum-rs"
+        mitum_mongodb_auth_enabled: true
+        mitum_consensus:
+          threshold: 67
+          interval_broadcast_ballot: "1.5s"
+        
+        # Performance settings
+        mitum_parallel_processes: 4
+        mitum_connection_timeout: 30
+        
+        # Security settings
+        mitum_firewall_enabled: true
+        mitum_ssh_port: 22
+
+    monitoring:
+      hosts:
+        monitoring:
+          ansible_host: {{ bastion_ip }}
+          ansible_user: {{ username }}
+          ansible_ssh_private_key_file: keys/ssh/{{ environment }}/bastion.pem
+          
+    mongodb:
+      hosts:
+{% for ip in nodes[:3] %}
+        mongodb{{ loop.index0 }}:
+          ansible_host: {{ ip }}
+          ansible_user: {{ username }}
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -W %h:%p -q {{ username }}@{{ bastion_ip }} -i keys/ssh/{{ environment }}/bastion.pem"'
+          ansible_ssh_private_key_file: keys/ssh/{{ environment }}/nodes.pem
+          mongodb_replica_role: "{% if loop.index0 == 0 %}primary{% else %}secondary{% endif %}"
+
+{% endfor %}
+
+      vars:
+        mongodb_port: 27017
+        mongodb_replica_set: "mitum-rs"
+        mongodb_auth_enabled: true 

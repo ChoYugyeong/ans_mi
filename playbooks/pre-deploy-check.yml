@@ -1,52 +1,37 @@
 ---
 # Pre-deployment Validation Playbook
-# Version: 4.0.0
+# Version: 5.0.0 - Refactored to use common validation tasks
 #
-# Validates the environment before deployment to catch issues early.
-# 
-# Validation items:
-# - Connectivity check
-# - OS compatibility
-# - Required port availability
-# - Disk space
-# - Time synchronization
-# - Existing service conflicts
+# This playbook validates the environment before deployment to catch issues early.
+# Uses centralized validation tasks to eliminate code duplication.
 
 - name: Pre-deployment validation for all hosts
   hosts: all
-  gather_facts: yes
-  any_errors_fatal: true  # Stop everything if any host fails
+  gather_facts: true
+  any_errors_fatal: true
+  vars:
+    # Configuration for validation behavior
+    validate_inter_node_connectivity: true
+    allow_mongodb_override: false
+    
   tasks:
-    # === Basic Connectivity Check ===
-    - name: Verify ansible connectivity
-      ping:
-      register: ping_result
-
-    - name: Display connection status
+    - name: Display validation start message
       debug:
-        msg: "Host {{ inventory_hostname }} is reachable"
+        msg: |
+          ========================================
+          Starting Pre-deployment Validation
+          ========================================
+          Host: {{ inventory_hostname }}
+          Environment: {{ mitum_environment | default('undefined') }}
+          ========================================
+      tags: [always]
 
-    # === OS Compatibility Check ===
-    - name: Check supported OS
-      assert:
-        that:
-          - ansible_os_family in ['Debian', 'RedHat']
-          - ansible_distribution_version is version('18.04', '>=') or 
-            ansible_distribution_version is version('7.0', '>=')
-        fail_msg: |
-          Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
-          Supported: Ubuntu 18.04+, CentOS/RHEL 7+
-        success_msg: "OS {{ ansible_distribution }} {{ ansible_distribution_version }} is supported"
+    # Use centralized validation tasks
+    - name: Execute common validation tasks
+      include_tasks: ../roles/mitum/tasks/common-validations.yml
+      tags: [validation]
 
-    # === Python Version Check ===
-    - name: Check Python version
-      assert:
-        that:
-          - ansible_python_version is version('3.6', '>=')
-        fail_msg: "Python 3.6+ required, found: {{ ansible_python_version }}"
-        success_msg: "Python {{ ansible_python_version }} meets requirements"
-
-    # === Disk Space Check ===
+    # Additional environment-specific validations
     - name: Check disk space
       set_fact:
         root_disk_free_gb: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/') | first).size_available / 1024 / 1024 / 1024 | round(2) }}"
@@ -137,7 +122,7 @@
 # === Mitum Node Specific Validation ===
 - name: Mitum nodes specific validation
   hosts: mitum_nodes
-  gather_facts: no
+  gather_facts: false
   tasks:
     # === Port Availability Check ===
     - name: Check if Mitum ports are available
@@ -183,7 +168,7 @@
 # === Validation Summary ===
 - name: Validation summary
   hosts: localhost
-  gather_facts: no
+  gather_facts: false
   run_once: true
   tasks:
     - name: Create validation report

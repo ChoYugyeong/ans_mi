@@ -1,0 +1,189 @@
+# Generated Group Variables for {{ environment }} Environment
+# Generated at: {{ ansible_date_time.iso8601 }}
+
+# ================================
+# Core Environment Configuration
+# ================================
+mitum_environment: "{{ environment }}"
+mitum_network_id: "{{ network_id }}"
+mitum_model_type: "{{ model_type }}"
+mitum_node_count: {{ node_count }}
+
+# ================================
+# Performance Settings (Auto-tuned)
+# ================================
+{% if node_count | int <= 5 %}
+# Small cluster configuration
+mitum_parallel_processes: 2
+mitum_worker_threads: 4
+mongodb_cache_size: "1G"
+{% elif node_count | int <= 10 %}
+# Medium cluster configuration
+mitum_parallel_processes: 4
+mitum_worker_threads: 8
+mongodb_cache_size: "2G"
+{% else %}
+# Large cluster configuration
+mitum_parallel_processes: 8
+mitum_worker_threads: 16
+mongodb_cache_size: "4G"
+{% endif %}
+
+# ================================
+# Environment-specific Settings
+# ================================
+{% if environment == 'development' %}
+# Development environment settings
+mitum_debug_enabled: true
+mitum_log_level: "debug"
+mitum_monitoring_enabled: false
+mitum_backup_enabled: false
+mitum_firewall_enabled: false
+{% elif environment == 'staging' %}
+# Staging environment settings
+mitum_debug_enabled: false
+mitum_log_level: "info"
+mitum_monitoring_enabled: true
+mitum_backup_enabled: true
+mitum_firewall_enabled: true
+{% else %}
+# Production environment settings
+mitum_debug_enabled: false
+mitum_log_level: "warn"
+mitum_monitoring_enabled: true
+mitum_backup_enabled: true
+mitum_firewall_enabled: true
+mitum_ssl_enabled: true
+{% endif %}
+
+# ================================
+# Network Configuration
+# ================================
+mitum_api_port: 54320
+mitum_node_port: 4320
+mitum_metrics_port: 9090
+mitum_bind_address: "0.0.0.0"
+
+# ================================
+# Database Configuration
+# ================================
+mongodb_enabled: true
+mongodb_port: 27017
+mongodb_replica_set: "mitum-rs"
+mongodb_auth_enabled: true
+
+# ================================
+# Security Configuration
+# ================================
+mitum_ssh_port: 22
+mitum_ssh_key_type: "ed25519"
+
+# Firewall ports
+mitum_allowed_ports:
+  - "{{ mitum_api_port }}"
+  - "{{ mitum_node_port }}"
+  - "{{ mitum_metrics_port }}"
+  - "{{ mitum_ssh_port }}"
+  - "{{ mongodb_port }}"
+
+# ================================
+# Backup Configuration
+# ================================
+{% if environment == 'production' %}
+mitum_backup_schedule: "0 2 * * *"  # Daily at 2 AM
+mitum_backup_retention_days: 30
+{% elif environment == 'staging' %}
+mitum_backup_schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+mitum_backup_retention_days: 14
+{% else %}
+mitum_backup_schedule: "0 4 * * 6"  # Weekly on Saturday at 4 AM
+mitum_backup_retention_days: 7
+{% endif %}
+
+# ================================
+# Monitoring Configuration
+# ================================
+{% if mitum_monitoring_enabled %}
+monitoring_prometheus_port: 9090
+monitoring_grafana_port: 3000
+monitoring_alertmanager_port: 9093
+monitoring_node_exporter_port: 9100
+
+# Alert thresholds based on environment
+{% if environment == 'production' %}
+alert_thresholds:
+  cpu_usage: 80
+  memory_usage: 85
+  disk_usage: 90
+  response_time: 5000
+{% else %}
+alert_thresholds:
+  cpu_usage: 90
+  memory_usage: 95
+  disk_usage: 95
+  response_time: 10000
+{% endif %}
+{% endif %}
+
+# ================================
+# Deployment Configuration
+# ================================
+mitum_deployment_phase: "all"
+mitum_validate_config: true
+mitum_cleanup_enabled: false
+
+# Batch processing based on cluster size
+{% if node_count | int <= 5 %}
+mitum_deployment_batch_size: "100%"
+{% elif node_count | int <= 10 %}
+mitum_deployment_batch_size: "50%"
+{% else %}
+mitum_deployment_batch_size: "25%"
+{% endif %}
+
+mitum_max_fail_percentage: 10
+
+# ================================
+# Performance Optimization
+# ================================
+# Ansible performance settings
+ansible_parallel_forks: {{ [50, (node_count | int * 2)] | min }}
+ansible_connection_timeout: 30
+ansible_command_timeout: 300
+ansible_pipelining: true
+ansible_ssh_args: "-o ControlMaster=auto -o ControlPersist=600s"
+
+# System performance
+system_swappiness: 10
+system_tcp_keepalive: true
+system_file_max: 65536
+
+# ================================
+# Resource Limits (Auto-calculated)
+# ================================
+{% set total_memory_mb = 4096 * (node_count | int) %}
+{% set per_node_memory = (total_memory_mb / (node_count | int)) | int %}
+
+mitum_memory_limit: "{{ (per_node_memory * 0.6) | int }}M"
+mitum_cpu_limit: "{{ [2, (node_count | int / 2)] | max | int }}"
+mitum_disk_min_space: "{{ 20 + (node_count | int * 5) }}G"
+
+# ================================
+# Feature Flags
+# ================================
+mitum_features:
+  enable_api: true
+  enable_digest: true
+  enable_metrics: true
+  enable_profiler: "{{ mitum_debug_enabled }}"
+  enable_ssl: "{{ mitum_ssl_enabled | default(false) }}"
+
+# ================================
+# Skip Flags
+# ================================
+skip_preparation: false
+skip_mongodb: false
+skip_keygen: false
+skip_monitoring: "{{ not mitum_monitoring_enabled }}"
+skip_backup: "{{ not mitum_backup_enabled }}"
+skip_validation: false 

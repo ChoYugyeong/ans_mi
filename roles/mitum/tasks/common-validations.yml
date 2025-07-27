@@ -1,0 +1,169 @@
+---
+# Common validation tasks used across multiple playbooks
+# This eliminates code duplication and ensures consistency
+
+# Basic connectivity validation
+- name: Verify Ansible connectivity
+  ping:
+  register: connectivity_check
+  failed_when: false
+  tags: [validation, connectivity]
+
+- name: Assert connectivity success
+  assert:
+    that:
+      - connectivity_check is success
+    fail_msg: "Failed to establish connection to {{ inventory_hostname }}"
+    success_msg: "Connection to {{ inventory_hostname }} successful"
+  tags: [validation, connectivity]
+
+# OS compatibility validation
+- name: Validate operating system compatibility
+  assert:
+    that:
+      - ansible_os_family in ['Debian', 'RedHat', 'Darwin']
+      - >
+        (ansible_os_family == 'Debian' and ansible_distribution_version is version('18.04', '>=')) or
+        (ansible_os_family == 'RedHat' and ansible_distribution_major_version | int >= 7) or
+        (ansible_os_family == 'Darwin' and ansible_distribution_version is version('10.14', '>='))
+    fail_msg: |
+      Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+      Supported: Ubuntu 18.04+, CentOS/RHEL 7+, macOS 10.14+
+    success_msg: "OS {{ ansible_distribution }} {{ ansible_distribution_version }} is supported"
+  tags: [validation, os]
+
+# Python version validation
+- name: Validate Python version
+  assert:
+    that:
+      - ansible_python_version is version('3.6', '>=')
+    fail_msg: "Python 3.6+ required, found: {{ ansible_python_version }}"
+    success_msg: "Python {{ ansible_python_version }} meets requirements"
+  tags: [validation, python]
+
+# Disk space validation
+- name: Check available disk space
+  setup:
+    gather_subset:
+      - hardware
+  tags: [validation, disk]
+
+- name: Validate minimum disk space
+  assert:
+    that:
+      - ansible_mounts | selectattr('mount', 'equalto', '/') | 
+        map(attribute='size_available') | first | int > (20 * 1024 * 1024 * 1024)
+    fail_msg: |
+      Insufficient disk space. Required: 20GB, Available: {{ 
+        (ansible_mounts | selectattr('mount', 'equalto', '/') | 
+         map(attribute='size_available') | first | int / (1024*1024*1024)) | round(2) 
+      }}GB
+    success_msg: "Sufficient disk space available"
+  tags: [validation, disk]
+
+# Memory validation
+- name: Validate minimum memory
+  assert:
+    that:
+      - ansible_memtotal_mb >= 4096
+    fail_msg: |
+      Insufficient memory. Required: 4GB, Available: {{ ansible_memtotal_mb }}MB
+    success_msg: "Sufficient memory available: {{ ansible_memtotal_mb }}MB"
+  tags: [validation, memory]
+
+# Required variables validation
+- name: Validate required Mitum variables
+  assert:
+    that:
+      - mitum_network_id is defined and mitum_network_id | length > 0
+      - mitum_model_type is defined and mitum_model_type | length > 0
+      - mitum_environment is defined and mitum_environment in ['development', 'staging', 'production']
+      - groups['mitum_nodes'] is defined and groups['mitum_nodes'] | length > 0
+    fail_msg: |
+      Required variables missing or invalid:
+      - mitum_network_id: {{ mitum_network_id | default('undefined') }}
+      - mitum_model_type: {{ mitum_model_type | default('undefined') }}
+      - mitum_environment: {{ mitum_environment | default('undefined') }}
+      - mitum_nodes group: {{ groups['mitum_nodes'] | default([]) | length }} nodes
+    success_msg: "All required variables are properly defined"
+  tags: [validation, variables]
+
+# Port availability validation
+- name: Check if required ports are available
+  wait_for:
+    port: "{{ item }}"
+    host: "{{ ansible_default_ipv4.address }}"
+    state: stopped
+    timeout: 5
+  register: port_check
+  failed_when: false
+  loop:
+    - "{{ mitum_api_port | default(54320) }}"
+    - "{{ mitum_node_port | default(4320) }}"
+    - "{{ mongodb_port | default(27017) }}"
+  tags: [validation, ports]
+
+- name: Validate port availability results
+  assert:
+    that:
+      - item.elapsed < 5
+    fail_msg: "Port {{ item.port }} is already in use on {{ inventory_hostname }}"
+    success_msg: "Port {{ item.port }} is available"
+  loop: "{{ port_check.results }}"
+  when: port_check.results is defined
+  tags: [validation, ports]
+
+# Service conflicts validation
+- name: Check for conflicting services
+  service_facts:
+  tags: [validation, services]
+
+- name: Validate no conflicting services
+  assert:
+    that:
+      - ansible_facts.services['mitum.service'] is not defined or 
+        ansible_facts.services['mitum.service'].state != 'running'
+      - ansible_facts.services['mongod.service'] is not defined or 
+        ansible_facts.services['mongod.service'].state != 'running' or
+        allow_mongodb_override | default(false)
+    fail_msg: |
+      Conflicting services detected:
+      {% for service in ['mitum.service', 'mongod.service'] %}
+      {% if ansible_facts.services[service] is defined and ansible_facts.services[service].state == 'running' %}
+      - {{ service }}: {{ ansible_facts.services[service].state }}
+      {% endif %}
+      {% endfor %}
+    success_msg: "No conflicting services detected"
+  tags: [validation, services]
+
+# Network connectivity validation
+- name: Test network connectivity between nodes
+  wait_for:
+    host: "{{ hostvars[item]['ansible_default_ipv4']['address'] }}"
+    port: 22
+    timeout: 10
+  loop: "{{ groups['mitum_nodes'] | difference([inventory_hostname]) }}"
+  when: 
+    - groups['mitum_nodes'] | length > 1
+    - validate_inter_node_connectivity | default(true)
+  tags: [validation, network]
+
+# Time synchronization validation
+- name: Check time synchronization
+  setup:
+    gather_subset:
+      - date_time
+  tags: [validation, time]
+
+- name: Validate time synchronization
+  assert:
+    that:
+      - ansible_date_time.epoch | int - lookup('pipe', 'date +%s') | int | abs < 300
+    fail_msg: |
+      Time difference too large: {{ 
+        ansible_date_time.epoch | int - lookup('pipe', 'date +%s') | int | abs 
+      }} seconds
+    success_msg: "Time synchronization is acceptable"
+  delegate_to: localhost
+  run_once: true
+  tags: [validation, time] 

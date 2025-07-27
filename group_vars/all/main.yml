@@ -1,0 +1,256 @@
+---
+# Centralized variable management for Mitum Ansible project
+# This file contains all common variables used across environments
+# Environment-specific overrides should go in inventories/{env}/group_vars/all.yml
+
+# ================================
+# Core Environment Configuration
+# ================================
+mitum_project_name: "mitum-blockchain"
+mitum_project_version: "5.0.0"
+
+# Environment settings (overridden per environment)
+mitum_environment: "production"  # development, staging, production
+mitum_network_id: "testnet"      # Network identifier
+mitum_model_type: "mitum-currency"  # mitum-currency, mitum-document
+
+# ================================
+# Installation Configuration
+# ================================
+mitum_version: "latest"
+mitum_install_method: "source"  # source, binary, docker
+mitum_service_user: "mitum"
+mitum_service_group: "mitum"
+
+# Directory structure
+mitum_base_dir: "/opt/mitum"
+mitum_config_dir: "{{ mitum_base_dir }}/config"
+mitum_data_dir: "{{ mitum_base_dir }}/data"
+mitum_logs_dir: "{{ mitum_base_dir }}/logs"
+mitum_keys_dir: "{{ mitum_base_dir }}/keys"
+mitum_backup_dir: "{{ mitum_base_dir }}/backup"
+
+# ================================
+# Network Configuration
+# ================================
+# Service ports
+mitum_api_port: 54320
+mitum_node_port: 4320
+mitum_metrics_port: 9090
+mitum_bind_address: "0.0.0.0"
+
+# Network settings
+mitum_max_connections: 1000
+mitum_connection_timeout: 30
+mitum_operation_timeout: 300
+
+# ================================
+# Resource Configuration
+# ================================
+# Resource limits
+mitum_memory_limit: "4G"
+mitum_cpu_limit: "2"
+mitum_disk_min_space: "20G"
+
+# Performance settings
+mitum_parallel_processes: 4
+mitum_worker_threads: 8
+
+# ================================
+# Feature Configuration
+# ================================
+# Core features
+mitum_features:
+  enable_api: true
+  enable_digest: true
+  enable_metrics: true
+  enable_profiler: false
+  enable_ssl: false
+
+# Optional features
+mitum_monitoring_enabled: true
+mitum_backup_enabled: true
+mitum_firewall_enabled: true
+
+# ================================
+# Security Configuration
+# ================================
+# SSH settings
+mitum_ssh_port: 22
+mitum_ssh_key_type: "ed25519"
+
+# SSL/TLS settings
+mitum_ssl_enabled: false
+mitum_ssl_cert_path: "{{ mitum_config_dir }}/ssl/cert.pem"
+mitum_ssl_key_path: "{{ mitum_config_dir }}/ssl/key.pem"
+
+# Firewall settings
+mitum_allowed_ports:
+  - "{{ mitum_api_port }}"
+  - "{{ mitum_node_port }}"
+  - "{{ mitum_metrics_port }}"
+  - "{{ mitum_ssh_port }}"
+
+# ================================
+# Database Configuration
+# ================================
+# MongoDB settings
+mongodb_enabled: true
+mongodb_port: 27017
+mongodb_replica_set: "mitum-rs"
+mongodb_auth_enabled: true
+mongodb_data_dir: "/var/lib/mongodb"
+mongodb_log_dir: "/var/log/mongodb"
+
+# Database performance
+mongodb_cache_size: "2G"
+mongodb_connection_limit: 1000
+
+# ================================
+# Monitoring Configuration
+# ================================
+# Prometheus settings
+monitoring_prometheus_port: 9090
+monitoring_node_exporter_port: 9100
+monitoring_pushgateway_port: 9091
+
+# Grafana settings
+monitoring_grafana_port: 3000
+monitoring_grafana_admin_user: "admin"
+
+# AlertManager settings
+monitoring_alertmanager_port: 9093
+monitoring_alert_retention: "720h"  # 30 days
+
+# Custom metrics
+monitoring_metrics_interval: "30s"
+monitoring_scrape_timeout: "10s"
+
+# ================================
+# Backup Configuration
+# ================================
+# Backup settings
+mitum_backup_schedule: "0 2 * * *"  # Daily at 2 AM
+mitum_backup_retention_days: 7
+mitum_backup_compression: true
+mitum_backup_encryption: false
+
+# Backup types
+mitum_backup_types:
+  - "full"      # Complete system backup
+  - "data"      # Data directory only
+  - "config"    # Configuration files only
+
+# ================================
+# Deployment Configuration
+# ================================
+# Deployment phases
+mitum_deployment_phase: "all"  # all, prepare, install, configure, start
+mitum_validate_config: true
+mitum_cleanup_enabled: false
+
+# Batch processing
+mitum_deployment_batch_size: "100%"
+mitum_max_fail_percentage: 20
+
+# ================================
+# Development Configuration
+# ================================
+# Debug and logging
+mitum_debug_enabled: false
+mitum_log_level: "info"  # debug, info, warn, error
+mitum_log_rotation: true
+mitum_log_max_size: "100M"
+mitum_log_max_files: 10
+
+# Development features
+mitum_dev_features:
+  enable_debug_api: false
+  enable_profiling: false
+  enable_tracing: false
+
+# ================================
+# Skip Flags (for selective deployment)
+# ================================
+skip_preparation: false
+skip_mongodb: false
+skip_keygen: false
+skip_monitoring: false
+skip_backup: false
+skip_validation: false
+
+# ================================
+# Validation Configuration
+# ================================
+# Validation settings
+validate_inter_node_connectivity: true
+validate_port_availability: true
+validate_disk_space: true
+validate_memory: true
+validate_time_sync: true
+
+# Validation thresholds
+validation_disk_min_gb: 20
+validation_memory_min_mb: 4096
+validation_time_diff_max_sec: 300
+
+# ================================
+# Error Handling Configuration
+# ================================
+# Error handling behavior
+continue_on_error: false
+retry_count: 3
+retry_delay: 5
+
+# Rollback settings
+enable_rollback: true
+rollback_timeout: 300
+
+# ================================
+# Notification Configuration
+# ================================
+# Notification settings (override in vault.yml)
+notifications_enabled: false
+notification_channels: []
+
+# Webhook settings
+webhook_timeout: 30
+webhook_retry_count: 3
+
+# ================================
+# Performance Tuning
+# ================================
+# Ansible performance
+ansible_parallel_forks: 50
+ansible_connection_timeout: 30
+ansible_command_timeout: 300
+ansible_pipelining: true
+ansible_ssh_args: "-o ControlMaster=auto -o ControlPersist=600s -o ControlPath=/tmp/ansible-ssh-%h-%p-%r"
+
+# System performance
+system_swappiness: 10
+system_tcp_keepalive: true
+system_file_max: 65536
+
+# ================================
+# Cloud Provider Configuration
+# ================================
+# Cloud settings (override per environment)
+cloud_provider: "none"  # aws, gcp, azure, none
+cloud_region: ""
+cloud_availability_zone: ""
+
+# ================================
+# Compatibility Settings
+# ================================
+# OS compatibility
+supported_os_families:
+  - "Debian"
+  - "RedHat"
+  - "Darwin"
+
+# Version requirements
+min_python_version: "3.6"
+min_ansible_version: "2.9"
+min_disk_space_gb: 20
+min_memory_mb: 4096 

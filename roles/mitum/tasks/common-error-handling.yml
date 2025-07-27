@@ -1,0 +1,268 @@
+---
+# Common error handling patterns for Mitum deployment tasks
+# Implements block/rescue/always pattern for consistent error handling
+
+# Generic error handling template that can be included in other tasks
+- name: Execute task with error handling
+  block:
+    # This is a template - actual tasks should override this block
+    - name: Placeholder task
+      debug:
+        msg: "This is a template for error handling. Override this block in your tasks."
+      
+  rescue:
+    # Error handling actions
+    - name: Log error details
+      debug:
+        msg: |
+          ========================================
+          Task Execution Failed
+          ========================================
+          Host: {{ inventory_hostname }}
+          Task: {{ ansible_failed_task.name | default('Unknown') }}
+          Error: {{ ansible_failed_result.msg | default('Unknown error') }}
+          Timestamp: {{ ansible_date_time.iso8601 }}
+          ========================================
+      delegate_to: localhost
+      run_once: true
+
+    - name: Create error report file
+      copy:
+        content: |
+          Error Report
+          ============
+          Host: {{ inventory_hostname }}
+          Task: {{ ansible_failed_task.name | default('Unknown') }}
+          Error: {{ ansible_failed_result.msg | default('Unknown error') }}
+          Timestamp: {{ ansible_date_time.iso8601 }}
+          
+          Full Error Details:
+          {{ ansible_failed_result | to_nice_json }}
+        dest: "/tmp/mitum-error-{{ inventory_hostname }}-{{ ansible_date_time.epoch }}.log"
+      delegate_to: localhost
+      when: create_error_logs | default(true)
+
+    # Attempt rollback if enabled
+    - name: Execute rollback tasks
+      include_tasks: rollback-procedures.yml
+      when: 
+        - enable_rollback | default(false)
+        - rollback_tasks is defined
+
+    # Notification handling
+    - name: Send error notification
+      include_tasks: send-notification.yml
+      vars:
+        notification_type: "error"
+        notification_message: |
+          Deployment failed on {{ inventory_hostname }}
+          Task: {{ ansible_failed_task.name | default('Unknown') }}
+          Error: {{ ansible_failed_result.msg | default('Unknown error') }}
+      when: 
+        - notifications_enabled | default(false)
+        - notification_channels | length > 0
+
+    # Re-raise the error if not continuing on error
+    - name: Re-raise error
+      fail:
+        msg: |
+          Task failed: {{ ansible_failed_task.name | default('Unknown') }}
+          Error: {{ ansible_failed_result.msg | default('Unknown error') }}
+      when: not continue_on_error | default(false)
+
+  always:
+    # Cleanup actions that always run
+    - name: Cleanup temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/mitum-temp-*"
+        - "/tmp/ansible-*"
+      failed_when: false
+      when: cleanup_temp_files | default(true)
+
+    - name: Update deployment status
+      set_fact:
+        deployment_status: "{{ 'failed' if ansible_failed_task is defined else 'success' }}"
+        deployment_timestamp: "{{ ansible_date_time.iso8601 }}"
+
+# Service-specific error handling patterns
+
+# MongoDB error handling
+- name: Handle MongoDB errors
+  block:
+    - name: Placeholder for MongoDB tasks
+      debug:
+        msg: "Override this with actual MongoDB tasks"
+        
+  rescue:
+    - name: Check MongoDB service status
+      systemd:
+        name: mongod
+      register: mongodb_status
+      failed_when: false
+
+    - name: Attempt MongoDB service restart
+      systemd:
+        name: mongod
+        state: restarted
+      when: 
+        - mongodb_status.status is defined
+        - attempt_service_restart | default(true)
+
+    - name: Check MongoDB logs
+      shell: tail -50 /var/log/mongodb/mongod.log
+      register: mongodb_logs
+      failed_when: false
+
+    - name: Report MongoDB error details
+      debug:
+        msg: |
+          MongoDB Error Details:
+          Service Status: {{ mongodb_status.status.ActiveState | default('unknown') }}
+          Recent Logs:
+          {{ mongodb_logs.stdout | default('No logs available') }}
+
+# Mitum service error handling
+- name: Handle Mitum service errors
+  block:
+    - name: Placeholder for Mitum service tasks
+      debug:
+        msg: "Override this with actual Mitum service tasks"
+        
+  rescue:
+    - name: Check Mitum service status
+      systemd:
+        name: mitum
+      register: mitum_status
+      failed_when: false
+
+    - name: Check Mitum configuration
+      command: mitum node info {{ mitum_config_dir }}/node.yml
+      register: mitum_config_check
+      failed_when: false
+
+    - name: Attempt Mitum service restart
+      systemd:
+        name: mitum
+        state: restarted
+      when: 
+        - mitum_status.status is defined
+        - mitum_config_check.rc == 0
+        - attempt_service_restart | default(true)
+
+    - name: Report Mitum error details
+      debug:
+        msg: |
+          Mitum Service Error Details:
+          Service Status: {{ mitum_status.status.ActiveState | default('unknown') }}
+          Config Check: {{ mitum_config_check.rc | default('failed') }}
+          Config Output: {{ mitum_config_check.stdout | default('N/A') }}
+
+# Network connectivity error handling
+- name: Handle network connectivity errors
+  block:
+    - name: Placeholder for network tasks
+      debug:
+        msg: "Override this with actual network tasks"
+        
+  rescue:
+    - name: Test basic connectivity
+      ping:
+      register: ping_test
+      failed_when: false
+
+    - name: Test SSH connectivity
+      wait_for:
+        host: "{{ inventory_hostname }}"
+        port: "{{ ansible_port | default(22) }}"
+        timeout: 10
+      register: ssh_test
+      failed_when: false
+      delegate_to: localhost
+
+    - name: Report connectivity error details
+      debug:
+        msg: |
+          Network Connectivity Error Details:
+          Ping Test: {{ 'success' if ping_test.ping is defined else 'failed' }}
+          SSH Test: {{ 'success' if ssh_test.elapsed is defined else 'failed' }}
+          Host: {{ inventory_hostname }}
+
+# File operation error handling
+- name: Handle file operation errors
+  block:
+    - name: Placeholder for file operations
+      debug:
+        msg: "Override this with actual file operation tasks"
+        
+  rescue:
+    - name: Check file system space
+      shell: df -h {{ item }}
+      register: disk_space
+      failed_when: false
+      loop:
+        - "/"
+        - "{{ mitum_base_dir | default('/opt/mitum') }}"
+
+    - name: Check file permissions
+      stat:
+        path: "{{ failed_file_path | default('/tmp') }}"
+      register: file_perms
+      failed_when: false
+
+    - name: Report file operation error details
+      debug:
+        msg: |
+          File Operation Error Details:
+          Disk Space: {{ disk_space.results | map(attribute='stdout') | list }}
+          File Permissions: {{ file_perms.stat.mode | default('unknown') }}
+          Failed Path: {{ failed_file_path | default('unknown') }}
+
+# Package installation error handling
+- name: Handle package installation errors
+  block:
+    - name: Placeholder for package installation
+      debug:
+        msg: "Override this with actual package installation tasks"
+        
+  rescue:
+    - name: Update package cache
+      package:
+        update_cache: true
+      failed_when: false
+
+    - name: Check available disk space
+      shell: df -h /var/cache
+      register: cache_space
+      failed_when: false
+
+    - name: List conflicting packages
+      shell: |
+        {% if ansible_os_family == 'Debian' %}
+        dpkg --get-selections | grep -E '(hold|deinstall)'
+        {% elif ansible_os_family == 'RedHat' %}
+        yum list installed | grep -E 'obsolete'
+        {% endif %}
+      register: package_conflicts
+      failed_when: false
+
+    - name: Report package installation error details
+      debug:
+        msg: |
+          Package Installation Error Details:
+          Cache Space: {{ cache_space.stdout | default('unknown') }}
+          Package Conflicts: {{ package_conflicts.stdout | default('none') }}
+          OS Family: {{ ansible_os_family }}
+
+# Retry mechanism for transient failures
+- name: Retry mechanism for transient failures
+  include_tasks: "{{ retry_task_file }}"
+  retries: "{{ retry_count | default(3) }}"
+  delay: "{{ retry_delay | default(5) }}"
+  when: 
+    - retry_task_file is defined
+    - enable_retry | default(true)
+  register: retry_result
+  until: retry_result is success 

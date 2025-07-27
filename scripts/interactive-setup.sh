@@ -112,43 +112,43 @@ select_environment() {
 
 # 노드 수 입력
 input_node_count() {
-    print_header "노드 구성"
-    echo "몇 개의 노드를 구성하시겠습니까?"
+    print_header "Node Configuration"
+    echo "How many nodes would you like to configure?"
     echo
-    print_info "권장사항:"
-    echo "  • 개발 환경: 1-3개"
-    echo "  • 스테이징 환경: 3-5개"
-    echo "  • 프로덕션 환경: 5개 이상"
+    print_info "Recommendations:"
+    echo "  • Development environment: 1-3 nodes"
+    echo "  • Staging environment: 3-5 nodes"
+    echo "  • Production environment: 5+ nodes"
     echo
     
     while true; do
-        print_question "노드 수를 입력해주세요 (1-10): "
+        print_question "Please enter the number of nodes (1-10): "
         read -r node_count
         
         if [[ "$node_count" =~ ^[0-9]+$ ]] && [ "$node_count" -ge 1 ] && [ "$node_count" -le 10 ]; then
-            print_success "$node_count개의 노드를 구성합니다."
+            print_success "Configuring $node_count nodes."
             break
         else
-            print_error "1에서 10 사이의 숫자를 입력해주세요."
+            print_error "Please enter a number between 1 and 10."
         fi
     done
 }
 
-# 네트워크 설정
+# Network configuration
 configure_network() {
-    print_header "네트워크 설정"
+    print_header "Network Configuration"
     
-    # 네트워크 ID
-    print_question "네트워크 ID를 입력해주세요 (기본값: mitum-test): "
+    # Network ID
+    print_question "Enter Network ID (default: mitum-test): "
     read -r network_id
     NETWORK_ID=${network_id:-mitum-test}
-    print_success "네트워크 ID: $NETWORK_ID"
+    print_success "Network ID: $NETWORK_ID"
     
-    # 체인 ID
-    print_question "체인 ID를 입력해주세요 (기본값: 100): "
+    # Chain ID
+    print_question "Enter Chain ID (default: 100): "
     read -r chain_id
     CHAIN_ID=${chain_id:-100}
-    print_success "체인 ID: $CHAIN_ID"
+    print_success "Chain ID: $CHAIN_ID"
 }
 
 # SSH 설정

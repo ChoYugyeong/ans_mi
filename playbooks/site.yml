@@ -25,7 +25,7 @@
 # === Set Deployment Metadata ===
 - name: Set deployment metadata
   hosts: all
-  gather_facts: no
+  gather_facts: false
   tags: [always]
   tasks:
     - name: Set deployment ID and timestamp
@@ -90,7 +90,7 @@
   import_playbook: setup-monitoring.yml
   tags: [monitoring]
   when: 
-    - mitum_monitoring.enabled | default(false)
+    - mitum_monitoring_enabled | default(false)
     - groups['monitoring'] is defined
     - groups['monitoring'] | length > 0
 
@@ -98,7 +98,7 @@
 - name: Configure backup
   import_playbook: setup-backup.yml
   tags: [backup]
-  when: mitum_backup.enabled | default(false)
+  when: mitum_backup_enabled | default(false)
 
 # === 9. Post-deployment Validation ===
 - name: Post-deployment validation
@@ -108,7 +108,7 @@
 # === 10. Deployment Summary ===
 - name: Deployment summary
   hosts: localhost
-  gather_facts: no
+  gather_facts: false
   tags: [always]
   tasks:
     - name: Generate deployment report
@@ -148,7 +148,7 @@
 # === Error Handling ===
 - name: Deployment failure handler
   hosts: all
-  gather_facts: no
+  gather_facts: false
   tags: [always]
   tasks:
     - name: Deployment failed notification

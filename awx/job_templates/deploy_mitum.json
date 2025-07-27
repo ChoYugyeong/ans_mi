@@ -62,6 +62,36 @@
         "default": 5
       },
       {
+        "question_name": "Bastion Server IP",
+        "question_description": "Public IP address of the bastion/jump server",
+        "required": true,
+        "type": "text",
+        "variable": "bastion_ip",
+        "min": 7,
+        "max": 15,
+        "default": ""
+      },
+      {
+        "question_name": "Node IPs",
+        "question_description": "Comma-separated list of node IP addresses (e.g., 10.0.1.10,10.0.1.11,10.0.1.12)",
+        "required": false,
+        "type": "textarea",
+        "variable": "node_ips",
+        "min": 0,
+        "max": 1000,
+        "default": ""
+      },
+      {
+        "question_name": "Node Subnet",
+        "question_description": "Subnet for auto-generating node IPs (e.g., 10.0.1 for 10.0.1.10, 10.0.1.11, etc)",
+        "required": false,
+        "type": "text",
+        "variable": "node_subnet",
+        "min": 0,
+        "max": 50,
+        "default": ""
+      },
+      {
         "question_name": "Consensus Nodes",
         "question_description": "Number of nodes participating in consensus",
         "required": true,

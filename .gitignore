@@ -1,52 +1,14 @@
-# Mitum Ansible .gitignore
+# Mitum Ansible - Optimized .gitignore
+# Version: 5.0.0
+#
+# 이 파일은 다음을 제외합니다:
+# 1. 시스템 파일들 (.DS_Store, Thumbs.db 등)
+# 2. 보안 관련 파일들 (키, 비밀번호 등)
+# 3. 임시 파일들 (캐시, 로그 등)
+# 4. 개발 환경 파일들
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-ENV/
-env/
-*.egg
-*.egg-info/
-dist/
-build/
-
-# Ansible
-*.retry
-ansible.log
-logs/
-.ansible/
-.cache/
-*.vault
-.vault_pass
-vault_password_file
-
-# SSH Keys
-keys/ssh/*
-!keys/ssh/.gitkeep
-keys/mitum/*/privatekey
-keys/mitum/*/publickey
-
-# Temporary files
-tmp/
-temp/
-cache/
-*.tmp
-*.temp
-*.swp
-*.swo
-*~
-
-# Backup files
-backup_*/
-backups/
-*.backup
-*.bak
-
-# OS specific
+# === System Files ===
+# macOS
 .DS_Store
 .DS_Store?
 ._*
@@ -55,185 +17,291 @@ backups/
 ehthumbs.db
 Thumbs.db
 
-# IDE
-.idea/
+# Windows
+*.lnk
+desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# === Security & Sensitive Files ===
+# Ansible Vault
+.vault_pass
+*.vault_pass
+vault_pass.txt
+
+# SSH Keys
+*.pem
+*.key
+*.ppk
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# Private keys and certificates
+*.crt
+*.p12
+*.pfx
+*.pem
+*.key
+*.csr
+
+# Secrets and credentials
+secrets/
+credentials/
+*.secret
+*.cred
+.env
+.env.local
+.env.production
+.env.staging
+.env.development
+
+# Vault encrypted files
+vault*.yml
+*_vault.yml
+group_vars/*/vault.yml
+host_vars/*/vault.yml
+
+# === Ansible Specific ===
+# Cache files
+.ansible_cache/
+.ansible_inventory_cache/
+*.retry
+
+# Fact cache
+fact_cache/
+facts_cache/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# === Python & Virtual Environment ===
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# === Node.js (for mitumjs tools) ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# === Logs ===
+# Application logs
+logs/
+*.log
+*.log.*
+log/
+
+# System logs
+syslog
+messages
+kern.log
+
+# === Backup Files ===
+# Ansible backups
+backup_*/
+*.backup
+*.bak
+*.old
+*.orig
+
+# Database backups
+*.sql
+*.dump
+*.backup
+
+# === IDE & Editor Files ===
+# VSCode
 .vscode/
+*.code-workspace
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
 *.sublime-project
 *.sublime-workspace
 
-# Environment specific
-.env
-.env.local
-inventories/*/host_vars/*_local.yml
-inventories/*/group_vars/*_local.yml
+# Vim
+*.swp
+*.swo
+*~
 
-# Mitum specific
-mitum-data/
-mitum-logs/
-genesis-data/
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
 
-# Monitoring
-prometheus-data/
-grafana-data/
-alertmanager-data/
-
-# AWX
-awx/credentials/*_actual.yml
-awx_credentials.yml
-
-# Node modules (if using JS tools)
-node_modules/
-package-lock.json
-
-# Terraform (if used)
-*.tfstate
-*.tfstate.backup
-.terraform/
-
-# Custom
-local/
-private/
-secret/
-        url: "{{ awx_base_url }}/api/v2/dashboards/"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ awx_token }}"
-        body_format: json
-        body:
-          name: "Mitum Network Status"
-          organization: 1
-          dashboard_config:
-            - widget_type: "graph"
-              name: "Node Status"
-              config:
-                metric: "up{job='mitum'}"
-                refresh_interval: 30
-            - widget_type: "stat"
-              name: "Active Nodes"
-              config:
-                metric: "count(up{job='mitum'} == 1)"
-            - widget_type: "gauge"
-              name: "Consensus Health"
-              config:
-                metric: "(count(mitum_consensus_state == 1) / count(mitum_consensus_state)) * 100"
-                thresholds:
-                  - value: 67
-                    color: "yellow"
-                  - value: 80
-                    color: "green"
-
-- name: Setup Prometheus federation for AWX
-  hosts: monitoring
-  become: yes
-  tasks:
-    - name: Configure Prometheus for AWX federation
-      blockinfile:
-        path: /etc/prometheus/prometheus.yml
-        marker: "# {mark} AWX FEDERATION CONFIG"
-        block: |
-          # AWX Federation endpoint
-          - job_name: 'awx_federation'
-            honor_labels: true
-            metrics_path: '/federate'
-            params:
-              'match[]':
-                - '{job="mitum"}'
-                - '{job="node_exporter"}'
-                - '{job="mongodb"}'
-            static_configs:
-              - targets:
-                  - '{{ awx_prometheus_endpoint | default("awx.example.com:9090") }}'
-
-    - name: Create AWX-specific recording rules
-      copy:
-        content: |
-          groups:
-            - name: awx_mitum_summary
-              interval: 30s
-              rules:
-                - record: awx:mitum_nodes_total
-                  expr: count(up{job="mitum"})
-                
-                - record: awx:mitum_nodes_healthy
-                  expr: count(up{job="mitum"} == 1)
-                
-                - record: awx:mitum_consensus_percentage
-                  expr: (count(mitum_consensus_state == 1) / count(mitum_consensus_state)) * 100
-                
-                - record: awx:mitum_avg_block_height
-                  expr: avg(mitum_block_height)
-                
-                - record: awx:mitum_api_availability
-                  expr: up{job="mitum",node_type="api"}
-        dest: /etc/prometheus/rules/awx_mitum.yml
-      notify: reload prometheus
-
-    - name: Setup Alertmanager webhook for AWX
-      template:
-        src: alertmanager-awx.yml.j2
-        dest: /etc/alertmanager/alertmanager.yml
-      notify: restart alertmanager
-
-- name: Create AWX job templates for Mitum operations
-  hosts: localhost
-  gather_facts: no
-  tasks:
-    - name: Create recovery job template
-      uri:
-        url: "{{ awx_base_url }}/api/v2/job_templates/"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ awx_token }}"
-        body_format: json
-        body:
-          name: "Mitum Node Recovery"
-          job_type: "run"
-          inventory: "{{ awx_inventory_id }}"
-          project: "{{ awx_project_id }}"
-          playbook: "playbooks/recovery.yml"
-          extra_vars:
-            recovery_action: "auto"
-          allow_simultaneous: false
-          
-    - name: Create monitoring check job template
-      uri:
-        url: "{{ awx_base_url }}/api/v2/job_templates/"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ awx_token }}"
-        body_format: json
-        body:
-          name: "Mitum Health Check"
-          job_type: "run"
-          inventory: "{{ awx_inventory_id }}"
-          project: "{{ awx_project_id }}"
-          playbook: "playbooks/validate.yml"
-          verbosity: 1
-          
-    - name: Create workflow for automated recovery
-      uri:
-        url: "{{ awx_base_url }}/api/v2/workflow_job_templates/"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ awx_token }}"
-        body_format: json
-        body:
-          name: "Mitum Automated Recovery Workflow"
-          organization: 1
-          schema:
-            - job_template: "Mitum Health Check"
-              success_nodes:
-                - job_template: "Mitum Node Recovery"
-              failure_nodes:
-                - job_template: "Send Alert Notification"
-# macOS system files
-.DS_Store
-.DS_Store?
+# === OS Generated Files ===
+# macOS
+.AppleDouble
+.LSOverride
+Icon
 ._*
-.Spotlight-V100
-.Trashes
-.vault_pass
-*.pem
-*.key
-secrets/
-vault*.yml
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# === Project Specific ===
+# Mitum specific files
+keys/testnet/
+keys/*/private/
+*.address
+*.privatekey
+*.publickey
+
+# Generated configurations
+generated/
+output/
+temp/
+
+# === Monitoring & Metrics ===
+# Prometheus data
+prometheus_data/
+grafana_data/
+
+# Metrics and monitoring
+*.metrics
+*.stats
+
+# === Development Tools ===
+# Pre-commit hooks
+.pre-commit-config.yaml
+
+# Linting
+.flake8
+.pylintrc
+.yamllint
+
+# Testing
+.coverage
+.pytest_cache/
+.tox/
+
+# === Temporary Directories ===
+tmp/
+temp/
+cache/
+.tmp/
+.temp/
+
+# === Documentation Build ===
+docs/_build/
+site/
+
+# === Package Managers ===
+# Composer
+composer.phar
+vendor/
+
+# Yarn
+.yarn/
+.yarnrc
+
+# === Cloud & Deployment ===
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Kubernetes
+*.kubeconfig
+
+# Docker
+.dockerignore
+
+# === Backup & Recovery ===
+# Emergency backups
+emergency_backup/
+disaster_recovery/
+
+# === Performance & Profiling ===
+# Profiling data
+*.prof
+*.profile
+
+# Memory dumps
+*.dump
+*.hprof
+
+# === Network & Connectivity ===
+# SSH known hosts
+known_hosts
+known_hosts_*
+
+# Network configuration
+network_config/
+*.network
+
+# === Custom Exclusions ===
+# Add any project-specific exclusions here
+# custom_exclusion/
+# project_specific_file.txt 

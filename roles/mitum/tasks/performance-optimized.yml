@@ -1,0 +1,298 @@
+---
+# Performance-optimized tasks for Mitum deployment
+# These tasks use parallel execution and caching to improve deployment speed
+
+# Parallel package installation across all nodes
+- name: Install packages in parallel
+  package:
+    name: "{{ packages }}"
+    state: present
+    update_cache: true
+  async: 300
+  poll: 0
+  register: package_install_jobs
+  when: packages is defined and packages | length > 0
+  tags: [packages, performance]
+
+- name: Wait for package installation to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: package_install_results
+  until: package_install_results.finished
+  retries: 60
+  delay: 5
+  loop: "{{ package_install_jobs.results | default([]) }}"
+  when: package_install_jobs is defined and package_install_jobs.results is defined
+  tags: [packages, performance]
+
+# Parallel service operations
+- name: Start services in parallel
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  async: 60
+  poll: 0
+  register: service_start_jobs
+  loop: "{{ services_to_start | default([]) }}"
+  tags: [services, performance]
+
+- name: Wait for services to start
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: service_start_results
+  until: service_start_results.finished
+  retries: 12
+  delay: 5
+  loop: "{{ service_start_jobs.results | default([]) }}"
+  when: service_start_jobs is defined
+  tags: [services, performance]
+
+# Parallel file operations with checksums
+- name: Create directories in parallel
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ mitum_service_user | default('mitum') }}"
+    group: "{{ mitum_service_group | default('mitum') }}"
+    mode: '0755'
+  async: 30
+  poll: 0
+  register: directory_jobs
+  loop: "{{ directories_to_create | default([]) }}"
+  tags: [files, performance]
+
+- name: Wait for directory creation
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: directory_results
+  until: directory_results.finished
+  retries: 6
+  delay: 5
+  loop: "{{ directory_jobs.results | default([]) }}"
+  when: directory_jobs is defined
+  tags: [files, performance]
+
+# Optimized configuration deployment
+- name: Deploy configuration files with validation
+  template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ item.owner | default(mitum_service_user) }}"
+    group: "{{ item.group | default(mitum_service_group) }}"
+    mode: "{{ item.mode | default('0644') }}"
+    backup: true
+    validate: "{{ item.validate | default(omit) }}"
+  register: config_changes
+  loop: "{{ config_files | default([]) }}"
+  notify:
+    - restart mitum
+    - reload configuration
+  tags: [config, performance]
+
+# Parallel health checks
+- name: Perform health checks in parallel
+  uri:
+    url: "{{ item.url }}"
+    method: GET
+    status_code: [200, 201]
+    timeout: 10
+  async: 30
+  poll: 0
+  register: health_check_jobs
+  loop: "{{ health_check_endpoints | default([]) }}"
+  tags: [health, performance]
+
+- name: Wait for health checks to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: health_check_results
+  until: health_check_results.finished
+  retries: 6
+  delay: 5
+  loop: "{{ health_check_jobs.results | default([]) }}"
+  when: health_check_jobs is defined
+  tags: [health, performance]
+
+# Batch user and permission management
+- name: Create users and groups efficiently
+  block:
+    - name: Create service groups
+      group:
+        name: "{{ item }}"
+        state: present
+        system: true
+      loop: "{{ service_groups | default(['mitum', 'mongodb']) }}"
+
+    - name: Create service users
+      user:
+        name: "{{ item.name }}"
+        group: "{{ item.group | default(item.name) }}"
+        system: true
+        shell: /bin/false
+        home: "{{ item.home | default('/var/lib/' + item.name) }}"
+        createhome: false
+        state: present
+      loop: "{{ service_users | default([{'name': 'mitum'}, {'name': 'mongodb'}]) }}"
+
+  tags: [users, performance]
+
+# Optimized key generation and distribution
+- name: Generate and distribute keys efficiently
+  block:
+    - name: Check if keys already exist
+      stat:
+        path: "{{ item }}"
+      register: existing_keys
+      loop: "{{ key_files | default([]) }}"
+
+    - name: Generate missing keys in parallel
+      shell: "{{ key_generation_command }}"
+      async: 120
+      poll: 0
+      register: key_gen_jobs
+      when: 
+        - item.stat is defined
+        - not item.stat.exists
+      loop: "{{ existing_keys.results | default([]) }}"
+
+    - name: Wait for key generation
+      async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: key_gen_results
+      until: key_gen_results.finished
+      retries: 24
+      delay: 5
+      loop: "{{ key_gen_jobs.results | default([]) }}"
+      when: key_gen_jobs is defined
+
+  tags: [keys, performance]
+
+# Efficient log collection and rotation
+- name: Setup log management efficiently
+  block:
+    - name: Configure log rotation for all services
+      template:
+        src: logrotate.j2
+        dest: "/etc/logrotate.d/{{ item }}"
+        mode: '0644'
+      loop: "{{ log_services | default(['mitum', 'mongodb']) }}"
+
+    - name: Create log directories with proper permissions
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode | default('0755') }}"
+      loop: "{{ log_directories | default([]) }}"
+
+  tags: [logging, performance]
+
+# Parallel port and connectivity tests
+- name: Test network connectivity in parallel
+  wait_for:
+    host: "{{ item.host }}"
+    port: "{{ item.port }}"
+    timeout: 10
+    state: started
+  async: 30
+  poll: 0
+  register: connectivity_jobs
+  loop: "{{ connectivity_tests | default([]) }}"
+  tags: [network, performance]
+
+- name: Wait for connectivity tests
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: connectivity_results
+  until: connectivity_results.finished
+  retries: 6
+  delay: 5
+  loop: "{{ connectivity_jobs.results | default([]) }}"
+  when: connectivity_jobs is defined
+  tags: [network, performance]
+
+# Optimized backup operations
+- name: Perform efficient backup operations
+  block:
+    - name: Create backup snapshots in parallel
+      shell: |
+        tar -czf "{{ backup_dir }}/{{ item.name }}-{{ ansible_date_time.epoch }}.tar.gz" \
+            -C "{{ item.source_dir }}" .
+      async: 1800  # 30 minutes
+      poll: 0
+      register: backup_jobs
+      loop: "{{ backup_sources | default([]) }}"
+
+    - name: Monitor backup progress
+      async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: backup_results
+      until: backup_results.finished
+      retries: 180  # 30 minutes max
+      delay: 10
+      loop: "{{ backup_jobs.results | default([]) }}"
+      when: backup_jobs is defined
+
+  tags: [backup, performance]
+
+# Cache fact gathering to avoid repetitive operations
+- name: Cache system facts efficiently
+  setup:
+    gather_subset:
+      - "!all"
+      - "!any"
+      - hardware
+      - network
+      - virtual
+    gather_timeout: 30
+  when: 
+    - cache_facts | default(true)
+    - ansible_facts is not defined or force_fact_gathering | default(false)
+  tags: [facts, performance]
+
+# Optimized configuration validation
+- name: Validate configurations in parallel
+  command: "{{ item.validate_command }}"
+  async: 60
+  poll: 0
+  register: validation_jobs
+  loop: "{{ config_validations | default([]) }}"
+  tags: [validation, performance]
+
+- name: Wait for validation to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: validation_results
+  until: validation_results.finished
+  retries: 12
+  delay: 5
+  loop: "{{ validation_jobs.results | default([]) }}"
+  when: validation_jobs is defined
+  tags: [validation, performance]
+
+# Performance monitoring during deployment
+- name: Monitor deployment performance
+  block:
+    - name: Record deployment start time
+      set_fact:
+        deployment_start_time: "{{ ansible_date_time.epoch }}"
+
+    - name: Monitor system resources during deployment
+      shell: |
+        echo "$(date): CPU: $(top -bn1 | grep 'Cpu(s)' | awk '{print $2}'), \
+        Memory: $(free | grep Mem | awk '{printf \"%.1f%%\", $3/$2 * 100.0}'), \
+        Disk: $(df / | tail -1 | awk '{print $5}')" 
+      register: resource_monitoring
+      when: monitor_resources | default(false)
+
+    - name: Log performance metrics
+      lineinfile:
+        path: "/tmp/deployment-performance.log"
+        line: "{{ ansible_date_time.iso8601 }}: {{ resource_monitoring.stdout | default('N/A') }}"
+        create: true
+      when: resource_monitoring is defined
+
+  tags: [monitoring, performance] 

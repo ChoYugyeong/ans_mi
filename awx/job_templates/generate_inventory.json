@@ -1,0 +1,186 @@
+{
+  "name": "Generate Dynamic Inventory",
+  "description": "Generate Ansible inventory dynamically based on user input for node count and IP addresses",
+  "job_type": "run",
+  "inventory": "Demo Inventory",
+  "project": "Mitum Ansible",
+  "playbook": "playbooks/generate-inventory.yml",
+  "scm_branch": "",
+  "forks": 5,
+  "limit": "localhost",
+  "verbosity": 1,
+  "extra_vars": "",
+  "job_tags": "",
+  "force_handlers": false,
+  "skip_tags": "",
+  "start_at_task": "",
+  "timeout": 600,
+  "use_fact_cache": false,
+  "organization": "Mitum Operations",
+  "credentials": [
+    "Local Machine"
+  ],
+  "survey_enabled": true,
+  "survey_spec": {
+    "name": "Dynamic Inventory Configuration",
+    "description": "Configure your infrastructure parameters for inventory generation",
+    "spec": [
+      {
+        "question_name": "Environment",
+        "question_description": "Target environment for deployment",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "target_environment",
+        "min": null,
+        "max": null,
+        "default": "production",
+        "choices": [
+          "development",
+          "staging",
+          "production"
+        ]
+      },
+      {
+        "question_name": "Bastion Server IP",
+        "question_description": "Public IP address of the bastion/jump server",
+        "required": true,
+        "type": "text",
+        "variable": "bastion_public_ip",
+        "min": 7,
+        "max": 15,
+        "default": ""
+      },
+      {
+        "question_name": "Total Nodes",
+        "question_description": "Total number of Mitum nodes to configure (3-50)",
+        "required": true,
+        "type": "integer",
+        "variable": "total_node_count",
+        "min": 3,
+        "max": 50,
+        "default": 5
+      },
+      {
+        "question_name": "Node IP Configuration Method",
+        "question_description": "How would you like to configure node IP addresses?",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "ip_config_method",
+        "min": null,
+        "max": null,
+        "default": "manual_list",
+        "choices": [
+          "manual_list",
+          "subnet_auto",
+          "aws_auto",
+          "gcp_auto"
+        ]
+      },
+      {
+        "question_name": "Node IPs (Manual)",
+        "question_description": "Comma-separated list of node IP addresses (only if Manual List selected)",
+        "required": false,
+        "type": "textarea",
+        "variable": "manual_node_ips",
+        "min": 0,
+        "max": 2000,
+        "default": ""
+      },
+      {
+        "question_name": "Node Subnet (Auto)",
+        "question_description": "Base subnet for auto-generating IPs (e.g., 10.0.1 generates 10.0.1.10, 10.0.1.11, etc)",
+        "required": false,
+        "type": "text",
+        "variable": "node_subnet_base",
+        "min": 0,
+        "max": 50,
+        "default": "10.0.1"
+      },
+      {
+        "question_name": "Starting IP",
+        "question_description": "Starting IP number for subnet auto-generation",
+        "required": false,
+        "type": "integer",
+        "variable": "subnet_start_ip",
+        "min": 1,
+        "max": 254,
+        "default": 10
+      },
+      {
+        "question_name": "SSH Username",
+        "question_description": "SSH username for connecting to nodes",
+        "required": true,
+        "type": "text",
+        "variable": "ssh_username",
+        "min": 1,
+        "max": 50,
+        "default": "ubuntu"
+      },
+      {
+        "question_name": "Network ID",
+        "question_description": "Unique identifier for your Mitum network",
+        "required": true,
+        "type": "text",
+        "variable": "mitum_network_id",
+        "min": 3,
+        "max": 50,
+        "default": "mitum"
+      },
+      {
+        "question_name": "Model Type",
+        "question_description": "Mitum blockchain model type",
+        "required": true,
+        "type": "multiplechoice",
+        "variable": "mitum_model_type",
+        "min": null,
+        "max": null,
+        "default": "mitum-currency",
+        "choices": [
+          "mitum-currency",
+          "mitum-document",
+          "mitum-nft"
+        ]
+      },
+      {
+        "question_name": "AWS Region (if AWS Auto)",
+        "question_description": "AWS region for automatic instance discovery",
+        "required": false,
+        "type": "text",
+        "variable": "aws_region",
+        "min": 0,
+        "max": 50,
+        "default": "us-west-2"
+      },
+      {
+        "question_name": "AWS Tag Filter (if AWS Auto)",
+        "question_description": "AWS tag filter for node discovery (e.g., Name=mitum-node-*)",
+        "required": false,
+        "type": "text",
+        "variable": "aws_tag_filter",
+        "min": 0,
+        "max": 200,
+        "default": "Name=mitum-node-*"
+      },
+      {
+        "question_name": "GCP Project (if GCP Auto)",
+        "question_description": "Google Cloud Project ID for automatic instance discovery",
+        "required": false,
+        "type": "text",
+        "variable": "gcp_project_id",
+        "min": 0,
+        "max": 100,
+        "default": ""
+      },
+      {
+        "question_name": "GCP Zone (if GCP Auto)",
+        "question_description": "Google Cloud zone for instance discovery",
+        "required": false,
+        "type": "text",
+        "variable": "gcp_zone",
+        "min": 0,
+        "max": 50,
+        "default": "us-central1-a"
+      }
+    ]
+  }
+} 
