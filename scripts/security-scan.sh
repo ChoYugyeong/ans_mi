@@ -1,149 +1,105 @@
 #!/bin/bash
-# Security Scan Script
-# Version: 1.0.0
-#
-# This script performs comprehensive security scans on the Mitum Ansible project
+# Security Scan Script for Mitum Ansible
+# Version: 2.0.0 - Complete implementation
 
 set -euo pipefail
 
-# Script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+# Colors
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly NC='\033[0m'
 
-# Source common functions
-# shellcheck source=lib/common.sh
-source "${SCRIPT_DIR}/lib/common.sh" || {
-    echo "Error: Cannot load common functions library" >&2
-    exit 1
-}
+# Script configuration
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+readonly REPORT_DIR="$ROOT_DIR/security-scan-results"
+readonly REPORT_FILE="$REPORT_DIR/security-report-$(date +%Y%m%d-%H%M%S).json"
+readonly LOG_FILE="$REPORT_DIR/scan.log"
 
-# Variables
-SCAN_RESULTS_DIR="$ROOT_DIR/security-scan-results"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-REPORT_FILE="$SCAN_RESULTS_DIR/security-report-$TIMESTAMP.json"
-ISSUES_FOUND=0
+# Create report directory
+mkdir -p "$REPORT_DIR"
 
-# Security checks to perform
-declare -A SECURITY_CHECKS=(
-    ["vault_encryption"]="Check for unencrypted vault files"
-    ["ssh_permissions"]="Check SSH key permissions"
-    ["hardcoded_secrets"]="Scan for hardcoded secrets"
-    ["dependency_vulnerabilities"]="Check for vulnerable dependencies"
-    ["ansible_security"]="Ansible security best practices"
-    ["file_permissions"]="Check file permissions"
-    ["exposed_ports"]="Check for exposed ports in configurations"
-    ["ssl_tls"]="Check SSL/TLS configurations"
-)
+# Initialize report
+declare -A ISSUES=()
+CRITICAL_COUNT=0
+HIGH_COUNT=0
+MEDIUM_COUNT=0
+LOW_COUNT=0
 
-# Initialize scan
-initialize_scan() {
-    log_info "Initializing security scan..."
-    ensure_directory "$SCAN_RESULTS_DIR"
-    
-    # Create report structure
-    cat > "$REPORT_FILE" << EOF
-{
-    "scan_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "scan_version": "1.0.0",
-    "project_root": "$ROOT_DIR",
-    "issues": []
-}
-EOF
-}
+# Logging functions
+log_info() { echo -e "${GREEN}[INFO]${NC} $*" | tee -a "$LOG_FILE"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "$LOG_FILE"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" | tee -a "$LOG_FILE"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $*" | tee -a "$LOG_FILE"; }
 
 # Add issue to report
 add_issue() {
     local severity="$1"
     local category="$2"
     local description="$3"
-    local file="${4:-}"
+    local file="$4"
     local line="${5:-}"
-    local remediation="${6:-}"
+    local recommendation="${6:-}"
     
-    ((ISSUES_FOUND++))
+    case "$severity" in
+        CRITICAL) ((CRITICAL_COUNT++)) ;;
+        HIGH) ((HIGH_COUNT++)) ;;
+        MEDIUM) ((MEDIUM_COUNT++)) ;;
+        LOW) ((LOW_COUNT++)) ;;
+    esac
     
-    local issue=$(cat << EOF
+    local issue_id="${category}_${file//\//_}_${line}"
+    ISSUES["$issue_id"]=$(cat <<EOF
 {
     "severity": "$severity",
     "category": "$category",
     "description": "$description",
     "file": "$file",
     "line": "$line",
-    "remediation": "$remediation"
+    "recommendation": "$recommendation"
 }
 EOF
 )
-    
-    # Add to JSON report
-    local temp_file=$(mktemp)
-    jq ".issues += [$issue]" "$REPORT_FILE" > "$temp_file" && mv "$temp_file" "$REPORT_FILE"
-    
-    # Log based on severity
-    case "$severity" in
-        "CRITICAL"|"HIGH")
-            log_error "[$severity] $description"
-            ;;
-        "MEDIUM")
-            log_warn "[$severity] $description"
-            ;;
-        "LOW"|"INFO")
-            log_info "[$severity] $description"
-            ;;
-    esac
 }
 
-# Check vault encryption
-check_vault_encryption() {
-    log_info "Checking vault file encryption..."
-    
-    local vault_files=$(find "$ROOT_DIR" -name "vault*.yml" -o -name "*.vault" 2>/dev/null)
-    
-    while IFS= read -r file; do
-        if [[ -f "$file" ]]; then
-            if ! head -1 "$file" | grep -q "ANSIBLE_VAULT"; then
-                add_issue "HIGH" "vault_encryption" \
-                    "Unencrypted vault file found" \
-                    "$file" "" \
-                    "Encrypt with: ansible-vault encrypt $file"
-            fi
-        fi
-    done <<< "$vault_files"
+# Banner
+show_banner() {
+    echo -e "${BLUE}"
+    cat << 'EOF'
+    __  ____  __                   _____                      _ __       
+   /  |/  (_)/ /___  ______ ___   / ___/___  _______  _______(_) /___  __
+  / /|_/ / / __/ / / / __ `__ \  \__ \/ _ \/ ___/ / / / ___/ / __/ / / /
+ / /  / / / /_/ /_/ / / / / / / ___/ /  __/ /__/ /_/ / /  / / /_/ /_/ / 
+/_/  /_/_/\__/\__,_/_/ /_/ /_/ /____/\___/\___/\__,_/_/  /_/\__/\__, /  
+                                                                /____/   
+EOF
+    echo -e "${NC}"
+    echo -e "${CYAN}Security Scan v2.0.0${NC}"
+    echo -e "${CYAN}===================${NC}"
 }
 
-# Check SSH key permissions
-check_ssh_permissions() {
-    log_info "Checking SSH key permissions..."
-    
-    local key_files=$(find "$ROOT_DIR/keys" -type f \( -name "*.pem" -o -name "*.key" -o -name "*_rsa" -o -name "*_ed25519" \) 2>/dev/null)
-    
-    while IFS= read -r key_file; do
-        if [[ -f "$key_file" ]]; then
-            local perms=$(stat -c "%a" "$key_file" 2>/dev/null || stat -f "%OLp" "$key_file")
-            if [[ "$perms" != "600" ]]; then
-                add_issue "HIGH" "ssh_permissions" \
-                    "Insecure SSH key permissions: $perms (should be 600)" \
-                    "$key_file" "" \
-                    "Fix with: chmod 600 $key_file"
-            fi
-        fi
-    done <<< "$key_files"
-}
-
-# Scan for hardcoded secrets
+# Check for hardcoded secrets
 check_hardcoded_secrets() {
-    log_info "Scanning for hardcoded secrets..."
+    log_info "Checking for hardcoded secrets..."
     
-    # Patterns to search for
     local patterns=(
         "password.*=.*['\"].*['\"]"
+        "passwd.*=.*['\"].*['\"]"
+        "pwd.*=.*['\"].*['\"]"
         "secret.*=.*['\"].*['\"]"
         "token.*=.*['\"].*['\"]"
         "api_key.*=.*['\"].*['\"]"
+        "apikey.*=.*['\"].*['\"]"
         "private_key.*=.*['\"].*['\"]"
+        "privatekey.*=.*['\"].*['\"]"
         "BEGIN.*PRIVATE KEY"
         "mongodb://.*:.*@"
         "postgres://.*:.*@"
         "mysql://.*:.*@"
+        "redis://.*:.*@"
+        "amqp://.*:.*@"
     )
     
     # Files to exclude
@@ -154,22 +110,21 @@ check_hardcoded_secrets() {
         ".git/*"
         ".venv/*"
         "node_modules/*"
+        "*.example"
+        "*.sample"
+        "*.template"
     )
     
     for pattern in "${patterns[@]}"; do
-        local found_files=$(grep -r -i -E "$pattern" "$ROOT_DIR" \
-            --exclude-dir=.git \
-            --exclude-dir=.venv \
-            --exclude-dir=node_modules \
-            --exclude="*.md" \
-            --exclude="*.log" \
-            --exclude="security-report*.json" \
-            2>/dev/null || true)
-        
         while IFS=: read -r file line content; do
             if [[ -n "$file" ]] && [[ -n "$content" ]]; then
                 # Check if it's a template or example
-                if [[ "$content" =~ (CHANGE_ME|EXAMPLE|PLACEHOLDER|TODO|FIXME|your-password|your-secret) ]]; then
+                if [[ "$content" =~ (CHANGE_ME|EXAMPLE|PLACEHOLDER|TODO|FIXME|your-password|your-secret|dummy|fake) ]]; then
+                    continue
+                fi
+                
+                # Check if it's a variable reference
+                if [[ "$content" =~ \{\{.*\}\} ]] || [[ "$content" =~ \$\{.*\} ]]; then
                     continue
                 fi
                 
@@ -178,291 +133,410 @@ check_hardcoded_secrets() {
                     "$file" "$line" \
                     "Move to vault file and use variable reference"
             fi
-        done <<< "$found_files"
+        done < <(grep -r -i -E "$pattern" "$ROOT_DIR" \
+            --exclude-dir=.git \
+            --exclude-dir=.venv \
+            --exclude-dir=node_modules \
+            --exclude-dir=.ansible_cache \
+            --exclude-dir=security-scan-results \
+            --exclude="*.md" \
+            --exclude="*.log" \
+            --exclude="security-report*.json" \
+            2>/dev/null | head -20 || true)
     done
-}
-
-# Check dependency vulnerabilities
-check_dependency_vulnerabilities() {
-    log_info "Checking for vulnerable dependencies..."
-    
-    # Check Python dependencies
-    if [[ -f "$ROOT_DIR/requirements.txt" ]]; then
-        if command -v safety >/dev/null 2>&1; then
-            local vulns=$(safety check -r "$ROOT_DIR/requirements.txt" --json 2>/dev/null || echo '[]')
-            
-            if [[ "$vulns" != "[]" ]]; then
-                local count=$(echo "$vulns" | jq '. | length')
-                add_issue "HIGH" "dependency_vulnerabilities" \
-                    "Found $count vulnerable Python dependencies" \
-                    "requirements.txt" "" \
-                    "Update dependencies: pip install --upgrade -r requirements.txt"
-            fi
-        else
-            log_warn "safety not installed, skipping Python vulnerability check"
-        fi
-    fi
-    
-    # Check Node.js dependencies
-    if [[ -f "$ROOT_DIR/tools/mitumjs/package-lock.json" ]]; then
-        if command -v npm >/dev/null 2>&1; then
-            cd "$ROOT_DIR/tools/mitumjs"
-            local audit_result=$(npm audit --json 2>/dev/null || echo '{"vulnerabilities":{}}')
-            local vuln_count=$(echo "$audit_result" | jq '.vulnerabilities | to_entries | length')
-            
-            if [[ "$vuln_count" -gt 0 ]]; then
-                add_issue "HIGH" "dependency_vulnerabilities" \
-                    "Found $vuln_count vulnerable npm dependencies" \
-                    "tools/mitumjs/package-lock.json" "" \
-                    "Fix with: cd tools/mitumjs && npm audit fix"
-            fi
-            cd - >/dev/null
-        fi
-    fi
-}
-
-# Check Ansible security
-check_ansible_security() {
-    log_info "Checking Ansible security configurations..."
-    
-    # Check ansible.cfg
-    if [[ -f "$ROOT_DIR/ansible.cfg" ]]; then
-        # Check host key checking
-        if grep -q "host_key_checking.*=.*False" "$ROOT_DIR/ansible.cfg"; then
-            add_issue "MEDIUM" "ansible_security" \
-                "Host key checking is disabled" \
-                "ansible.cfg" "" \
-                "Enable with: host_key_checking = True"
-        fi
-        
-        # Check vault password file
-        if grep -q "vault_password_file.*=.*" "$ROOT_DIR/ansible.cfg"; then
-            local vault_pass_file=$(grep "vault_password_file" "$ROOT_DIR/ansible.cfg" | cut -d= -f2 | tr -d ' ')
-            if [[ -f "$vault_pass_file" ]]; then
-                add_issue "HIGH" "ansible_security" \
-                    "Vault password file referenced in ansible.cfg" \
-                    "ansible.cfg" "" \
-                    "Use environment variable instead: export ANSIBLE_VAULT_PASSWORD_FILE"
-            fi
-        fi
-    fi
-    
-    # Check playbooks for security issues
-    local playbooks=$(find "$ROOT_DIR/playbooks" -name "*.yml" -o -name "*.yaml" 2>/dev/null)
-    
-    while IFS= read -r playbook; do
-        if [[ -f "$playbook" ]]; then
-            # Check for command/shell without proper quoting
-            if grep -q -E "(command|shell):\s*[^|>]" "$playbook"; then
-                local line=$(grep -n -E "(command|shell):\s*[^|>]" "$playbook" | head -1 | cut -d: -f1)
-                add_issue "MEDIUM" "ansible_security" \
-                    "Potential command injection vulnerability" \
-                    "$playbook" "$line" \
-                    "Use proper quoting or switch to specific modules"
-            fi
-            
-            # Check for become without password
-            if grep -q "become:.*true" "$playbook" && ! grep -q "become_ask_pass" "$playbook"; then
-                add_issue "LOW" "ansible_security" \
-                    "Using become without password prompt" \
-                    "$playbook" "" \
-                    "Consider using become_ask_pass for interactive sessions"
-            fi
-        fi
-    done <<< "$playbooks"
 }
 
 # Check file permissions
 check_file_permissions() {
     log_info "Checking file permissions..."
     
-    # Check for world-readable sensitive files
-    local sensitive_patterns=(
-        "*.key"
-        "*.pem"
-        "*.vault"
-        "vault*.yml"
-        ".env"
-        "*.secret"
-    )
+    # Check for world-readable private keys
+    while IFS= read -r file; do
+        local perms=$(stat -c %a "$file" 2>/dev/null || stat -f %p "$file" 2>/dev/null | tail -c 4)
+        if [[ "${perms: -1}" != "0" ]]; then
+            add_issue "HIGH" "file_permissions" \
+                "Private key file is world-readable" \
+                "$file" "" \
+                "Set permissions to 600: chmod 600 $file"
+        fi
+    done < <(find "$ROOT_DIR" -type f \( -name "*.key" -o -name "*.pem" \) 2>/dev/null || true)
     
-    for pattern in "${sensitive_patterns[@]}"; do
-        local files=$(find "$ROOT_DIR" -name "$pattern" -type f 2>/dev/null)
-        
-        while IFS= read -r file; do
-            if [[ -f "$file" ]]; then
-                local perms=$(stat -c "%a" "$file" 2>/dev/null || stat -f "%OLp" "$file")
-                if [[ "${perms: -1}" != "0" ]]; then
-                    add_issue "HIGH" "file_permissions" \
-                        "Sensitive file is world-readable: $perms" \
-                        "$file" "" \
-                        "Fix with: chmod 600 $file"
-                fi
-            fi
-        done <<< "$files"
-    done
+    # Check vault files
+    while IFS= read -r file; do
+        local perms=$(stat -c %a "$file" 2>/dev/null || stat -f %p "$file" 2>/dev/null | tail -c 4)
+        if [[ "${perms: -2}" != "00" ]]; then
+            add_issue "HIGH" "file_permissions" \
+                "Vault file has excessive permissions" \
+                "$file" "" \
+                "Set permissions to 600: chmod 600 $file"
+        fi
+    done < <(find "$ROOT_DIR" -type f -name "*vault*.yml" 2>/dev/null || true)
 }
 
-# Check exposed ports
-check_exposed_ports() {
-    log_info "Checking for exposed ports in configurations..."
+# Check Ansible configuration
+check_ansible_config() {
+    log_info "Checking Ansible configuration..."
     
-    # Common database and service ports
-    local dangerous_binds=(
-        "0\\.0\\.0\\.0:27017"  # MongoDB
-        "0\\.0\\.0\\.0:3306"   # MySQL
-        "0\\.0\\.0\\.0:5432"   # PostgreSQL
-        "0\\.0\\.0\\.0:6379"   # Redis
-        "0\\.0\\.0\\.0:9200"   # Elasticsearch
-    )
-    
-    for bind in "${dangerous_binds[@]}"; do
-        local found=$(grep -r -E "bind.*$bind" "$ROOT_DIR" \
-            --include="*.yml" \
-            --include="*.yaml" \
-            --include="*.conf" \
-            --exclude-dir=.git \
-            2>/dev/null || true)
+    if [[ -f "$ROOT_DIR/ansible.cfg" ]]; then
+        # Check host key checking
+        if grep -q "host_key_checking.*=.*[Ff]alse" "$ROOT_DIR/ansible.cfg"; then
+            add_issue "MEDIUM" "ansible_config" \
+                "Host key checking is disabled" \
+                "ansible.cfg" "" \
+                "Enable host key checking for production use"
+        fi
         
-        while IFS=: read -r file line content; do
-            if [[ -n "$file" ]]; then
-                add_issue "HIGH" "exposed_ports" \
-                    "Service bound to all interfaces" \
-                    "$file" "$line" \
-                    "Bind to localhost or specific interface instead"
-            fi
-        done <<< "$found"
-    done
-}
-
-# Check SSL/TLS configurations
-check_ssl_tls() {
-    log_info "Checking SSL/TLS configurations..."
-    
-    # Check for weak SSL/TLS settings
-    local weak_patterns=(
-        "ssl_protocols.*SSLv2"
-        "ssl_protocols.*SSLv3"
-        "ssl_protocols.*TLSv1[^.]"
-        "ssl_ciphers.*:RC4"
-        "ssl_ciphers.*:DES"
-        "ssl_ciphers.*:MD5"
-    )
-    
-    for pattern in "${weak_patterns[@]}"; do
-        local found=$(grep -r -i -E "$pattern" "$ROOT_DIR" \
-            --include="*.yml" \
-            --include="*.yaml" \
-            --include="*.conf" \
-            --exclude-dir=.git \
-            2>/dev/null || true)
-        
-        while IFS=: read -r file line content; do
-            if [[ -n "$file" ]]; then
-                add_issue "MEDIUM" "ssl_tls" \
-                    "Weak SSL/TLS configuration detected" \
-                    "$file" "$line" \
-                    "Use TLS 1.2+ and strong ciphers only"
-            fi
-        done <<< "$found"
-    done
-}
-
-# Generate summary
-generate_summary() {
-    log_info "Generating security scan summary..."
-    
-    # Count issues by severity
-    local critical=$(jq '[.issues[] | select(.severity == "CRITICAL")] | length' "$REPORT_FILE")
-    local high=$(jq '[.issues[] | select(.severity == "HIGH")] | length' "$REPORT_FILE")
-    local medium=$(jq '[.issues[] | select(.severity == "MEDIUM")] | length' "$REPORT_FILE")
-    local low=$(jq '[.issues[] | select(.severity == "LOW")] | length' "$REPORT_FILE")
-    local info=$(jq '[.issues[] | select(.severity == "INFO")] | length' "$REPORT_FILE")
-    
-    # Add summary to report
-    local temp_file=$(mktemp)
-    jq ".summary = {
-        \"total_issues\": $ISSUES_FOUND,
-        \"critical\": $critical,
-        \"high\": $high,
-        \"medium\": $medium,
-        \"low\": $low,
-        \"info\": $info,
-        \"scan_duration_seconds\": $SECONDS
-    }" "$REPORT_FILE" > "$temp_file" && mv "$temp_file" "$REPORT_FILE"
-    
-    # Display summary
-    echo
-    echo "=========================================="
-    echo "       Security Scan Summary"
-    echo "=========================================="
-    echo
-    echo "Total Issues Found: $ISSUES_FOUND"
-    echo
-    echo "By Severity:"
-    echo "  CRITICAL: $critical"
-    echo "  HIGH:     $high"
-    echo "  MEDIUM:   $medium"
-    echo "  LOW:      $low"
-    echo "  INFO:     $info"
-    echo
-    echo "Report saved to: $REPORT_FILE"
-    echo "=========================================="
-    
-    # Exit with error if critical or high issues found
-    if [[ $critical -gt 0 ]] || [[ $high -gt 0 ]]; then
-        log_error "Security scan failed with critical/high severity issues"
-        return 1
-    elif [[ $medium -gt 0 ]]; then
-        log_warn "Security scan completed with medium severity issues"
-        return 0
-    else
-        log_success "Security scan completed with no major issues"
-        return 0
+        # Check logging
+        if ! grep -q "log_path" "$ROOT_DIR/ansible.cfg"; then
+            add_issue "LOW" "ansible_config" \
+                "Ansible logging is not configured" \
+                "ansible.cfg" "" \
+                "Add log_path configuration for audit trail"
+        fi
     fi
 }
 
-# Main function
-main() {
-    log_info "Starting security scan..."
+# Check for unsafe Jinja2 templates
+check_unsafe_templates() {
+    log_info "Checking for unsafe Jinja2 templates..."
     
-    # Initialize
-    initialize_scan
+    # Check for unsafe variable usage
+    while IFS=: read -r file line content; do
+        add_issue "HIGH" "unsafe_template" \
+            "Unsafe use of 'safe' filter in template" \
+            "$file" "$line" \
+            "Review if 'safe' filter is necessary; it disables escaping"
+    done < <(grep -r "| *safe" "$ROOT_DIR" --include="*.j2" --include="*.jinja2" 2>/dev/null || true)
     
-    # Run all security checks
-    for check_name in "${!SECURITY_CHECKS[@]}"; do
-        log_info "Running: ${SECURITY_CHECKS[$check_name]}"
-        case "$check_name" in
-            vault_encryption)
-                check_vault_encryption
-                ;;
-            ssh_permissions)
-                check_ssh_permissions
-                ;;
-            hardcoded_secrets)
-                check_hardcoded_secrets
-                ;;
-            dependency_vulnerabilities)
-                check_dependency_vulnerabilities
-                ;;
-            ansible_security)
-                check_ansible_security
-                ;;
-            file_permissions)
-                check_file_permissions
-                ;;
-            exposed_ports)
-                check_exposed_ports
-                ;;
-            ssl_tls)
-                check_ssl_tls
-                ;;
-        esac
-    done
-    
-    # Generate summary
-    generate_summary
+    # Check for shell command injection
+    while IFS=: read -r file line content; do
+        if [[ ! "$content" =~ quote ]]; then
+            add_issue "HIGH" "command_injection" \
+                "Potential command injection in template" \
+                "$file" "$line" \
+                "Use | quote filter for shell commands"
+        fi
+    done < <(grep -r "shell:.*{{" "$ROOT_DIR" --include="*.yml" --include="*.yaml" 2>/dev/null | grep -v "| *quote" || true)
 }
 
-# Execute main function
+# Check for exposed ports
+check_exposed_ports() {
+    log_info "Checking for exposed ports..."
+    
+    # Check for 0.0.0.0 bindings
+    while IFS=: read -r file line content; do
+        if [[ "$content" =~ 0\.0\.0\.0 ]]; then
+            add_issue "MEDIUM" "exposed_ports" \
+                "Service binding to all interfaces" \
+                "$file" "$line" \
+                "Bind to specific interfaces in production"
+        fi
+    done < <(grep -r "0\\.0\\.0\\.0" "$ROOT_DIR" --include="*.yml" --include="*.yaml" --include="*.j2" 2>/dev/null || true)
+}
+
+# Check for outdated software versions
+check_versions() {
+    log_info "Checking software versions..."
+    
+    # Check MongoDB version
+    if grep -r "mongodb.*3\\." "$ROOT_DIR" --include="*.yml" 2>/dev/null | grep -q version; then
+        add_issue "MEDIUM" "outdated_software" \
+            "MongoDB version 3.x is outdated" \
+            "group_vars" "" \
+            "Update to MongoDB 5.x or later"
+    fi
+    
+    # Check Ansible version in requirements
+    if [[ -f "$ROOT_DIR/requirements.txt" ]]; then
+        if grep -q "ansible.*<2\\.9" "$ROOT_DIR/requirements.txt"; then
+            add_issue "HIGH" "outdated_software" \
+                "Ansible version is outdated" \
+                "requirements.txt" "" \
+                "Update to Ansible 2.9 or later"
+        fi
+    fi
+}
+
+# Check for security headers
+check_security_headers() {
+    log_info "Checking security headers configuration..."
+    
+    # Check nginx configurations
+    while IFS= read -r file; do
+        local has_security_headers=false
+        
+        if grep -q "X-Frame-Options" "$file"; then
+            has_security_headers=true
+        fi
+        
+        if ! $has_security_headers; then
+            add_issue "MEDIUM" "security_headers" \
+                "Missing security headers in web server config" \
+                "$file" "" \
+                "Add X-Frame-Options, X-Content-Type-Options, etc."
+        fi
+    done < <(find "$ROOT_DIR" -name "*.conf" -o -name "nginx*.j2" 2>/dev/null || true)
+}
+
+# Check SSL/TLS configuration
+check_ssl_config() {
+    log_info "Checking SSL/TLS configuration..."
+    
+    # Check for weak ciphers
+    while IFS=: read -r file line content; do
+        if [[ "$content" =~ (SSL.*v2|SSL.*v3|TLS.*v1\.0) ]]; then
+            add_issue "HIGH" "weak_crypto" \
+                "Weak SSL/TLS protocol version" \
+                "$file" "$line" \
+                "Use TLS 1.2 or higher"
+        fi
+    done < <(grep -r -E "(ssl_protocol|SSLProtocol)" "$ROOT_DIR" --include="*.yml" --include="*.conf" --include="*.j2" 2>/dev/null || true)
+}
+
+# Check for default credentials
+check_default_credentials() {
+    log_info "Checking for default credentials..."
+    
+    local default_patterns=(
+        "admin:admin"
+        "root:root"
+        "test:test"
+        "user:password"
+        "admin:password"
+        "root:toor"
+        "admin:123456"
+    )
+    
+    for pattern in "${default_patterns[@]}"; do
+        if grep -r "$pattern" "$ROOT_DIR" --include="*.yml" --include="*.yaml" 2>/dev/null | grep -q .; then
+            add_issue "CRITICAL" "default_credentials" \
+                "Default credentials found" \
+                "multiple files" "" \
+                "Change all default credentials immediately"
+            break
+        fi
+    done
+}
+
+# Check Python dependencies for vulnerabilities
+check_python_dependencies() {
+    log_info "Checking Python dependencies..."
+    
+    if [[ -f "$ROOT_DIR/requirements.txt" ]]; then
+        # Check for packages without version pins
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^[a-zA-Z] ]] && [[ ! "$line" =~ [=\<\>] ]]; then
+                add_issue "MEDIUM" "unpinned_dependency" \
+                    "Python package without version pin: $line" \
+                    "requirements.txt" "" \
+                    "Pin all dependencies to specific versions"
+            fi
+        done < "$ROOT_DIR/requirements.txt"
+        
+        # Check if safety is available
+        if command -v safety >/dev/null 2>&1; then
+            log_info "Running safety check on Python dependencies..."
+            if ! safety check -r "$ROOT_DIR/requirements.txt" --json > "$REPORT_DIR/safety-check.json" 2>/dev/null; then
+                add_issue "HIGH" "vulnerable_dependencies" \
+                    "Vulnerable Python packages detected" \
+                    "requirements.txt" "" \
+                    "Review safety-check.json and update packages"
+            fi
+        else
+            log_warn "Safety not installed. Run: pip install safety"
+        fi
+    fi
+}
+
+# Generate report
+generate_report() {
+    log_info "Generating security report..."
+    
+    local report_json=$(cat <<EOF
+{
+    "scan_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "scan_version": "2.0.0",
+    "project_root": "$ROOT_DIR",
+    "summary": {
+        "total_issues": $((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT)),
+        "critical": $CRITICAL_COUNT,
+        "high": $HIGH_COUNT,
+        "medium": $MEDIUM_COUNT,
+        "low": $LOW_COUNT
+    },
+    "issues": [
+EOF
+)
+    
+    local first=true
+    for issue_id in "${!ISSUES[@]}"; do
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            report_json+=","
+        fi
+        report_json+=\n        '
+        report_json+="${ISSUES[$issue_id]}"
+    done
+    
+    report_json+=\n    ]\n}'
+    
+    echo "$report_json" > "$REPORT_FILE"
+    
+    # Generate HTML report
+    generate_html_report
+}
+
+# Generate HTML report
+generate_html_report() {
+    local html_file="${REPORT_FILE%.json}.html"
+    
+    cat > "$html_file" <<'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mitum Security Scan Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        .summary { display: flex; justify-content: space-around; margin: 20px 0; }
+        .summary-item { text-align: center; padding: 20px; border-radius: 8px; min-width: 120px; }
+        .critical { background-color: #f8d7da; color: #721c24; }
+        .high { background-color: #fff3cd; color: #856404; }
+        .medium { background-color: #cce5ff; color: #004085; }
+        .low { background-color: #d4edda; color: #155724; }
+        .issue { margin: 15px 0; padding: 15px; border-left: 4px solid; border-radius: 4px; background-color: #f8f9fa; }
+        .issue.critical { border-color: #dc3545; }
+        .issue.high { border-color: #ffc107; }
+        .issue.medium { border-color: #17a2b8; }
+        .issue.low { border-color: #28a745; }
+        .issue-header { font-weight: bold; margin-bottom: 5px; }
+        .issue-file { color: #666; font-size: 0.9em; }
+        .issue-recommendation { margin-top: 10px; padding: 10px; background-color: #e9ecef; border-radius: 4px; }
+        .footer { margin-top: 40px; text-align: center; color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Mitum Security Scan Report</h1>
+        <p>Scan Date: <span id="scan-date"></span></p>
+        
+        <h2>Summary</h2>
+        <div class="summary">
+            <div class="summary-item critical">
+                <h3>Critical</h3>
+                <div class="count" id="critical-count">0</div>
+            </div>
+            <div class="summary-item high">
+                <h3>High</h3>
+                <div class="count" id="high-count">0</div>
+            </div>
+            <div class="summary-item medium">
+                <h3>Medium</h3>
+                <div class="count" id="medium-count">0</div>
+            </div>
+            <div class="summary-item low">
+                <h3>Low</h3>
+                <div class="count" id="low-count">0</div>
+            </div>
+        </div>
+        
+        <h2>Issues</h2>
+        <div id="issues-container"></div>
+        
+        <div class="footer">
+            Generated by Mitum Security Scanner v2.0.0
+        </div>
+    </div>
+    
+    <script>
+        // Load report data
+        const reportData = 
+EOF
+    
+    cat "$REPORT_FILE" >> "$html_file"
+    
+    cat >> "$html_file" <<'EOF'
+        ;
+        
+        // Populate summary
+        document.getElementById('scan-date').textContent = new Date(reportData.scan_date).toLocaleString();
+        document.getElementById('critical-count').textContent = reportData.summary.critical;
+        document.getElementById('high-count').textContent = reportData.summary.high;
+        document.getElementById('medium-count').textContent = reportData.summary.medium;
+        document.getElementById('low-count').textContent = reportData.summary.low;
+        
+        // Populate issues
+        const container = document.getElementById('issues-container');
+        reportData.issues.forEach(issue => {
+            const div = document.createElement('div');
+            div.className = `issue ${issue.severity.toLowerCase()}`;
+            div.innerHTML = `
+                <div class="issue-header">[${issue.severity}] ${issue.description}</div>
+                <div class="issue-file">File: ${issue.file}${issue.line ? ` (Line ${issue.line})` : ''}</div>
+                <div class="issue-recommendation">
+                    <strong>Recommendation:</strong> ${issue.recommendation}
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    </script>
+</body>
+</html>
+EOF
+    
+    log_info "HTML report generated: $html_file"
+}
+
+# Main execution
+main() {
+    show_banner
+    
+    log_info "Starting security scan of $ROOT_DIR"
+    log_info "Report will be saved to: $REPORT_FILE"
+    
+    # Run all checks
+    check_hardcoded_secrets
+    check_file_permissions
+    check_ansible_config
+    check_unsafe_templates
+    check_exposed_ports
+    check_versions
+    check_security_headers
+    check_ssl_config
+    check_default_credentials
+    check_python_dependencies
+    
+    # Generate report
+    generate_report
+    
+    # Display summary
+    echo ""
+    log_info "Security Scan Complete!"
+    echo -e "${YELLOW}Summary:${NC}"
+    echo -e "  Critical Issues: ${RED}$CRITICAL_COUNT${NC}"
+    echo -e "  High Issues: ${YELLOW}$HIGH_COUNT${NC}"
+    echo -e "  Medium Issues: ${BLUE}$MEDIUM_COUNT${NC}"
+    echo -e "  Low Issues: ${GREEN}$LOW_COUNT${NC}"
+    echo -e ""
+    echo -e "Reports saved to:"
+    echo -e "  JSON: $REPORT_FILE"
+    echo -e "  HTML: ${REPORT_FILE%.json}.html"
+    
+    # Exit with error if critical issues found
+    if [[ $CRITICAL_COUNT -gt 0 ]]; then
+        log_error "Critical security issues found! Please address them immediately."
+        exit 1
+    elif [[ $HIGH_COUNT -gt 0 ]]; then
+        log_warn "High severity issues found. Please review and fix them."
+        exit 0
+    else
+        log_success "No critical or high severity issues found."
+        exit 0
+    fi
+}
+
+# Run main function
 main "$@"

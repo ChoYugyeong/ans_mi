@@ -1,135 +1,214 @@
 ---
+# Mitum Key Generation Playbook
+# Version: 2.0.0 - Using MitumJS SDK
+
 - name: Generate keys for Mitum nodes
   hosts: localhost
   gather_facts: yes
   vars:
     mitum_version: "{{ lookup('env', 'MITUM_VERSION') | default('3.0.0') }}"
     network_id: "{{ lookup('env', 'NETWORK_ID') | default('testnet') }}"
-    node_count: "{{ lookup('env', 'NODE_COUNT') | default(3) }}"
+    node_count: "{{ lookup('env', 'NODE_COUNT') | default(3) | int }}"
     key_type: "{{ lookup('env', 'KEY_TYPE') | default('btc') }}"
-    threshold: "{{ lookup('env', 'THRESHOLD') | default(100) }}"
+    threshold: "{{ lookup('env', 'THRESHOLD') | default(100) | int }}"
     keys_dir: "{{ playbook_dir }}/../keys/{{ network_id }}"
     mitumjs_dir: "{{ playbook_dir }}/../tools/mitumjs"
+    node_binary: "{{ which_node.stdout | default('/usr/bin/node') }}"
 
   tasks:
-    - name: Debug environment variables
+    - name: Show key generation parameters
       debug:
         msg: |
-          Environment Variables:
-          - network_id: {{ network_id }}
-          - keys_dir: {{ keys_dir }}
-          - node_count: {{ node_count }}
+          ========================================
+          Key Generation Parameters
+          ========================================
+          Network ID: {{ network_id }}
+          Node Count: {{ node_count }}
+          Key Type: {{ key_type }}
+          Threshold: {{ threshold }}%
+          Output Directory: {{ keys_dir }}
+          ========================================
+
+    - name: Check for Node.js
+      command: which node
+      register: which_node
+      changed_when: false
+      failed_when: false
+
+    - name: Verify Node.js is installed
+      fail:
+        msg: "Node.js is required for key generation. Please install Node.js 16+ first."
+      when: which_node.rc != 0
+
+    - name: Check Node.js version
+      command: "{{ node_binary }} --version"
+      register: node_version
+      changed_when: false
+
+    - name: Display Node.js version
+      debug:
+        msg: "Node.js version: {{ node_version.stdout }}"
 
     - name: Check for existing keys
       stat:
         path: "{{ keys_dir }}/keys-summary.json"
       register: existing_keys
 
-    - name: Show existing keys status
-      debug:
-        msg: "Keys already exist at {{ keys_dir }}"
+    - name: Handle existing keys
+      block:
+        - name: Show existing keys status
+          debug:
+            msg: "⚠️  Keys already exist for network '{{ network_id }}' at {{ keys_dir }}"
+
+        - name: Confirm key regeneration
+          pause:
+            prompt: "Keys already exist. Regenerate? (yes/no)"
+          register: regenerate_keys
+          when: not (force_regenerate | default(false))
+
+        - name: Backup existing keys
+          archive:
+            path: "{{ keys_dir }}"
+            dest: "{{ keys_dir }}-backup-{{ ansible_date_time.epoch }}.tar.gz"
+            format: gz
+          when: regenerate_keys.user_input | default('no') | lower == 'yes' or force_regenerate | default(false)
+
+        - name: Remove existing keys directory
+          file:
+            path: "{{ keys_dir }}"
+            state: absent
+          when: regenerate_keys.user_input | default('no') | lower == 'yes' or force_regenerate | default(false)
       when: existing_keys.stat.exists
 
-    - name: Confirm key regeneration
-      pause:
-        prompt: "Keys already exist for network '{{ network_id }}'. Regenerate? (yes/no)"
-      register: regenerate_keys
-      when: existing_keys.stat.exists
-
-    - block:
+    - name: Generate keys
+      block:
         - name: Create keys directory
           file:
             path: "{{ keys_dir }}"
             state: directory
+            mode: '0700'
+
+        - name: Create tools directory
+          file:
+            path: "{{ mitumjs_dir }}"
+            state: directory
             mode: '0755'
+
+        - name: Copy package.json for MitumJS
+          copy:
+            src: package.json
+            dest: "{{ mitumjs_dir }}/package.json"
+            mode: '0644'
+
+        - name: Copy key generation script
+          copy:
+            src: mitum-keygen.js
+            dest: "{{ mitumjs_dir }}/mitum-keygen.js"
+            mode: '0755'
+
+        - name: Check if npm packages are installed
+          stat:
+            path: "{{ mitumjs_dir }}/node_modules/@mitumjs/mitumjs"
+          register: mitumjs_installed
 
         - name: Install MitumJS dependencies
           npm:
             path: "{{ mitumjs_dir }}"
             state: present
-
-        - name: Check MitumJS installation
-          command: npm list @mitumjs/mitumjs
-          args:
-            chdir: "{{ mitumjs_dir }}"
-          register: mitumjs_check
-          changed_when: false
-          failed_when: false
-
-        - name: Display MitumJS version
-          debug:
-            msg: "MitumJS version: {{ mitumjs_check.stdout_lines[-1] | default('Not installed') }}"
+          when: not mitumjs_installed.stat.exists
+          environment:
+            NODE_ENV: production
 
         - name: Generate keys using MitumJS
           command: >
-            node {{ mitumjs_dir }}/mitum-keygen.js
+            {{ node_binary }} {{ mitumjs_dir }}/mitum-keygen.js
             --network-id {{ network_id }}
             --node-count {{ node_count }}
             --threshold {{ threshold }}
             --output {{ keys_dir }}
             --type {{ key_type }}
           register: keygen_output
+          environment:
+            NODE_ENV: production
 
-        - name: Show keygen output
+        - name: Display key generation output
           debug:
-            var: keygen_output
-          when: keygen_output is defined
+            var: keygen_output.stdout_lines
 
-        - name: Check if keys-summary.json was created
+        - name: Verify keys were generated
           stat:
             path: "{{ keys_dir }}/keys-summary.json"
-          register: keys_summary_check
+          register: keys_generated
+          failed_when: not keys_generated.stat.exists
 
-        - name: Parse key generation output
+        - name: Load generated keys summary
+          slurp:
+            src: "{{ keys_dir }}/keys-summary.json"
+          register: keys_summary_file
+
+        - name: Parse keys summary
           set_fact:
-            keygen_summary: "{{ (keygen_output.stdout | regex_search('--- Key Generation Summary ---\\n(.+)', '\\1') | first | from_json) if keygen_output is defined and keygen_output.stdout is defined else {} }}"
-          when: keygen_output is defined and keygen_output.stdout is defined
+            keys_summary: "{{ keys_summary_file.content | b64decode | from_json }}"
 
-      when: not existing_keys.stat.exists or (regenerate_keys.user_input | default('no') | lower == 'yes')
+        - name: Display key generation summary
+          debug:
+            msg: |
+              ========================================
+              ✅ Key Generation Complete!
+              ========================================
+              Network ID: {{ keys_summary.network_id }}
+              Generated: {{ keys_summary.generated_at }}
+              Total Nodes: {{ keys_summary.node_count }}
+              Key Type: {{ keys_summary.key_type }}
+              
+              Node Keys Generated:
+              {% for node in keys_summary.nodes %}
+              - {{ node.node_name }}: {{ node.address }}
+              {% endfor %}
+              
+              {% if keys_summary.genesis_account is defined %}
+              Genesis Account:
+              - Address: {{ keys_summary.genesis_account.address }}
+              - Threshold: {{ keys_summary.genesis_account.threshold }}%
+              {% endif %}
+              
+              Files Location: {{ keys_dir }}
+              ========================================
 
-    - name: Load generated keys summary
-      slurp:
-        src: "{{ keys_dir }}/keys-summary.json"
-      register: keys_summary_file
-      when: keys_summary_check is not defined or keys_summary_check.stat.exists
+        - name: Set secure permissions on key files
+          file:
+            path: "{{ item }}"
+            mode: '0600'
+          with_fileglob:
+            - "{{ keys_dir }}/*.pem"
+            - "{{ keys_dir }}/*.key"
+            - "{{ keys_dir }}/node*.json"
 
-    - name: Display key generation summary
+        - name: Create keys archive
+          archive:
+            path: "{{ keys_dir }}"
+            dest: "{{ playbook_dir }}/../keys/keys-{{ network_id }}-{{ ansible_date_time.epoch }}.tar.gz"
+            format: gz
+            mode: '0600'
+
+        - name: Generate keys distribution file
+          template:
+            src: keys-distribution.j2
+            dest: "{{ keys_dir }}/distribution.yml"
+            mode: '0600'
+          vars:
+            nodes: "{{ keys_summary.nodes }}"
+
+      when: not existing_keys.stat.exists or regenerate_keys.user_input | default('no') | lower == 'yes' or force_regenerate | default(false)
+
+    - name: Key generation complete
       debug:
         msg: |
-          Key Generation Summary:
-          - Network ID: {{ network_id }}
-          - Total Nodes: {{ node_count }}
-          - Key Type: {{ key_type }}
-          - Threshold: {{ threshold }}%
-
-          Generated Nodes:
-          {% if keys_summary_file is defined and keys_summary_file.content is defined %}
-          {% for node in (keys_summary_file.content | b64decode | from_json).nodes %}
-          - {{ node.address }}: {{ node.public_key }}
-          {% endfor %}
-
-          Genesis Account:
-          - Address: {{ (keys_summary_file.content | b64decode | from_json).genesis_account.address }}
-          - Threshold: {{ (keys_summary_file.content | b64decode | from_json).genesis_account.threshold }}%
-          {% else %}
-          (Keys summary file not loaded)
-          {% endif %}
-
-    - name: Create keys archive
-      archive:
-        path: "{{ keys_dir }}"
-        dest: "{{ playbook_dir }}/../keys/keys-{{ network_id }}-{{ ansible_date_time.epoch }}.tar.gz"
-        format: gz
-      when: keys_summary_file is defined
-
-    - name: Set keys directory permissions
-      file:
-        path: "{{ keys_dir }}"
-        state: directory
-        mode: '0700'
-        recurse: yes
-
-    # Skip distribute-keys task if not needed
-    - name: Key distribution note
-      debug:
-        msg: "Keys are stored locally. Distribution will be handled during deployment."
+          ========================================
+          Next Steps:
+          ========================================
+          1. Review generated keys in: {{ keys_dir }}
+          2. Distribute keys to nodes securely
+          3. Update inventory with node addresses
+          4. Run deployment: make deploy
+          ========================================

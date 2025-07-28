@@ -1,29 +1,225 @@
-# Python
+# Mitum Ansible .gitignore
+# Version: 2.0.0
+
+# === Python ===
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === Virtual Environments ===
 .venv/
 venv/
+ENV/
+env/
+.env
 
-# Ansible
+# === Ansible ===
 *.retry
 .ansible_cache/
+ansible.log
+ansible-*.log
+*.orig
 
-# Keys
+# === Keys - CRITICAL: Never commit these! ===
 keys/
 *.pem
 *.key
+*.pub
+*.crt
+*.csr
+*.p12
+*.pfx
+.vault_pass
+vault.yml
+*-vault.yml
+*-secret.yml
+*-secrets.yml
 
-# Logs
+# === Logs ===
 logs/
 *.log
+*.log.*
+log/
 
-# OS
+# === Backups ===
+backups/
+*.backup
+*.bak
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# === OS Generated ===
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
 
-# IDE
+# === IDE and Editors ===
+# VSCode
 .vscode/
-.idea/
+*.code-workspace
+.history/
 
-# Temp
-.tmp/
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Eclipse
+.project
+.classpath
+.settings/
+
+# Vim
 *.swp
+*.swo
+*.swn
+.*.swp
+.*.swo
+.*.swn
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# === Temporary Files ===
+.tmp/
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+
+# === Security Scan Results ===
+security-report*.json
+security-report*.html
+security-scan-results/
+vulnerability-report/
+audit-*.json
+
+# === Test Results ===
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.tox/
+nosetests.xml
+test-results/
+junit.xml
+
+# === Documentation ===
+docs/_build/
+site/
+
+# === Terraform (if used) ===
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# === Molecule ===
+molecule/*/.molecule/
+molecule/*/tests/__pycache__/
+
+# === Local Development ===
+.localstack/
+.env.local
+.env.*.local
+local_settings.py
+
+# === Node.js (for MitumJS) ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.npm
+.yarn-integrity
+
+# === AWX/Tower ===
+awx-manage
+tower-cli.cfg
+.tower_cli.cfg
+
+# === Certificates ===
+*.cert
+*.ca
+ca-certificates/
+
+# === Database Dumps ===
+*.sql
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+
+# === Sensitive Configuration ===
+*-prod.yml
+*-production.yml
+production.yml
+credentials/
+passwords/
+tokens/
+
+# === Generated Files ===
+generated/
+output/
+reports/*.txt
+reports/*.json
+reports/*.html
+
+# === Archives ===
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+
+# === Custom ===
+# Add any project-specific ignores below
+.project-notes
+TODO.local
+NOTES.local

@@ -2,30 +2,28 @@
 /**
  * Mitum Key Generator using MitumJS SDK
  * Generates keys for Mitum nodes with support for multi-sig
+ * Version: 2.0.0 - ESM Module version
  */
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import crypto from 'crypto';
+
+// Get current directory
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Fix crypto issue for Node.js environments
-const crypto = require('crypto');
 if (!global.crypto) {
     global.crypto = crypto.webcrypto || {
         getRandomValues: (arr) => crypto.randomBytes(arr.length)
     };
 }
 
-// Import MitumJS after crypto fix
-let Keypair, Address;
-try {
-    const mitumjs = require('@mitumjs/mitumjs');
-    Keypair = mitumjs.Keypair;
-    Address = mitumjs.Address;
-} catch (error) {
-    console.error('Error loading MitumJS:', error.message);
-    console.error('Please run: npm install @mitumjs/mitumjs');
-    process.exit(1);
-}
+// Import MitumJS
+import { Keypair, Address } from '@mitumjs/mitumjs';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -38,30 +36,69 @@ const options = {
     seed: null
 };
 
+// Help function
+function showHelp() {
+    console.log(`
+Mitum Key Generator
+Usage: node mitum-keygen.js [options]
+
+Options:
+  --network-id <id>    Network ID (default: mitum)
+  --node-count <n>     Number of nodes (default: 1)
+  --threshold <n>      Threshold percentage for multi-sig (default: 100)
+  --output <dir>       Output directory (default: ./keys)
+  --type <type>        Key type: btc, ether, stellar (default: btc)
+  --seed <seed>        Seed for deterministic generation (optional)
+  --help               Show this help message
+
+Example:
+  node mitum-keygen.js --network-id mainnet --node-count 5 --threshold 80
+`);
+    process.exit(0);
+}
+
 // Parse arguments
-for (let i = 0; i < args.length; i += 2) {
-    const key = args[i].replace('--', '');
-    const value = args[i + 1];
+for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     
-    switch (key) {
-        case 'network-id':
-            options.networkId = value;
-            break;
-        case 'node-count':
-            options.nodeCount = parseInt(value);
-            break;
-        case 'threshold':
-            options.threshold = parseInt(value);
-            break;
-        case 'output':
-            options.output = value;
-            break;
-        case 'type':
-            options.type = value;
-            break;
-        case 'seed':
-            options.seed = value;
-            break;
+    if (arg === '--help' || arg === '-h') {
+        showHelp();
+    }
+    
+    if (arg.startsWith('--') && i + 1 < args.length) {
+        const key = arg.replace('--', '');
+        const value = args[i + 1];
+        
+        switch (key) {
+            case 'network-id':
+                options.networkId = value;
+                i++;
+                break;
+            case 'node-count':
+                options.nodeCount = parseInt(value);
+                i++;
+                break;
+            case 'threshold':
+                options.threshold = parseInt(value);
+                i++;
+                break;
+            case 'output':
+                options.output = value;
+                i++;
+                break;
+            case 'type':
+                if (!['btc', 'ether', 'stellar'].includes(value)) {
+                    console.error(`Error: Invalid key type '${value}'. Must be btc, ether, or stellar`);
+                    process.exit(1);
+                }
+                options.type = value;
+                i++;
+                break;
+            case 'seed':
+                options.seed = value;
+                i++;
+                break;
+        }
     }
 }
 
@@ -82,8 +119,8 @@ if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
 }
 
-// Generate keys
-function generateKeys() {
+// Generate keys function
+async function generateKeys() {
     const keys = [];
     const summary = {
         network_id: options.networkId,
@@ -94,7 +131,14 @@ function generateKeys() {
         nodes: []
     };
 
-    console.log(`Generating ${options.nodeCount} key pairs for network: ${options.networkId}`);
+    console.log(`Mitum Key Generator v2.0.0`);
+    console.log(`========================`);
+    console.log(`Network ID: ${options.networkId}`);
+    console.log(`Node Count: ${options.nodeCount}`);
+    console.log(`Key Type: ${options.type}`);
+    console.log(`Threshold: ${options.threshold}%`);
+    console.log(`Output Dir: ${outputDir}`);
+    console.log(`\nGenerating keys...`);
 
     try {
         for (let i = 0; i < options.nodeCount; i++) {
@@ -102,188 +146,122 @@ function generateKeys() {
             let keypair;
             try {
                 const seed = options.seed ? `${options.seed}-node${i}` : null;
-                keypair = seed ? 
-                    Keypair.fromSeed(seed, options.type) : 
-                    Keypair.random(options.type);
+                keypair = Keypair.random(options.type, seed);
             } catch (error) {
-                console.error(`Error generating keypair for node${i}:`, error.message);
-                // Fallback to manual generation if MitumJS fails
-                keypair = generateFallbackKeypair(i);
+                console.error(`Error generating keypair for node ${i}:`, error.message);
+                process.exit(1);
             }
 
-            // Generate node address
-            const nodeAddress = `node${i}-${options.networkId}`;
-            
-            // Create node info
-            const nodeInfo = {
-                node_id: i,
-                address: nodeAddress,
-                public_key: keypair.publicKey,
-                private_key: keypair.privateKey,
-                type: keypair.type || options.type,
-                hint: keypair.hint || 'mpr'
+            const nodeData = {
+                index: i,
+                node_name: `node${i}`,
+                address: keypair.publickey.toString(),
+                public_key: keypair.publickey.toString(),
+                private_key: keypair.privatekey.toString(),
+                type: options.type,
+                network_id: options.networkId
             };
 
-            keys.push(nodeInfo);
-
-            // Add to summary (without private key)
+            keys.push(nodeData);
             summary.nodes.push({
-                node_id: i,
-                address: nodeAddress,
-                public_key: keypair.publicKey,
-                type: keypair.type || options.type
+                index: i,
+                node_name: nodeData.node_name,
+                address: nodeData.address,
+                public_key: nodeData.public_key
             });
 
-            // Create node directory
-            const nodeDir = path.join(outputDir, `node${i}`);
-            if (!fs.existsSync(nodeDir)) {
-                fs.mkdirSync(nodeDir, { recursive: true });
-            }
-
-            // Write individual key files
-            fs.writeFileSync(
-                path.join(nodeDir, 'node.json'),
-                JSON.stringify(nodeInfo, null, 2)
-            );
-
-            // Write separate key files for easy access
-            fs.writeFileSync(
-                path.join(nodeDir, 'publickey'),
-                keypair.publicKey
-            );
-
-            fs.writeFileSync(
-                path.join(nodeDir, 'privatekey'),
-                keypair.privateKey
-            );
-
-            fs.writeFileSync(
-                path.join(nodeDir, 'address'),
-                nodeAddress
-            );
-
+            // Save individual key file
+            const keyFile = path.join(outputDir, `node${i}.json`);
+            fs.writeFileSync(keyFile, JSON.stringify(nodeData, null, 2));
             console.log(`✓ Generated keys for node${i}`);
+
+            // Also save in PEM format for compatibility
+            const pemFile = path.join(outputDir, `node${i}-private.pem`);
+            fs.writeFileSync(pemFile, `-----BEGIN PRIVATE KEY-----\n${nodeData.private_key}\n-----END PRIVATE KEY-----\n`);
+            fs.chmodSync(pemFile, 0o600);
         }
 
-        // Generate genesis account if requested
-        if (options.nodeCount > 0) {
-            const genesisKeys = [];
-            const keysForMultisig = keys.slice(0, Math.min(3, keys.length));
+        // Generate genesis account if multiple nodes
+        if (options.nodeCount > 1) {
+            const publicKeys = keys.map(k => ({ 
+                key: k.public_key, 
+                weight: Math.floor(100 / options.nodeCount) 
+            }));
             
-            for (const key of keysForMultisig) {
-                genesisKeys.push({
-                    key: key.public_key,
-                    weight: Math.floor(100 / keysForMultisig.length)
-                });
+            // Adjust last key weight to ensure total is 100
+            const totalWeight = publicKeys.reduce((sum, k) => sum + k.weight, 0);
+            if (totalWeight < 100) {
+                publicKeys[publicKeys.length - 1].weight += (100 - totalWeight);
             }
-
-            // Adjust last weight to ensure total is 100
-            if (genesisKeys.length > 0) {
-                const totalWeight = genesisKeys.reduce((sum, k) => sum + k.weight, 0);
-                genesisKeys[genesisKeys.length - 1].weight += (100 - totalWeight);
-            }
-
-            let genesisAddress;
-            try {
-                genesisAddress = Address.from(genesisKeys, options.threshold, options.networkId);
-            } catch (error) {
-                // Fallback genesis address
-                genesisAddress = `genesis-${options.networkId}-${Date.now()}`;
-            }
-
-            const genesisAccount = {
-                address: genesisAddress,
-                keys: genesisKeys,
-                threshold: options.threshold
+            
+            const genesisAddress = new Address(publicKeys, options.threshold, options.networkId);
+            
+            summary.genesis_account = {
+                address: genesisAddress.toString(),
+                threshold: options.threshold,
+                keys: publicKeys
             };
 
-            summary.genesis_account = genesisAccount;
-
-            // Write genesis account info
-            fs.writeFileSync(
-                path.join(outputDir, 'genesis-account.json'),
-                JSON.stringify(genesisAccount, null, 2)
-            );
+            // Save genesis account file
+            const genesisFile = path.join(outputDir, 'genesis-account.json');
+            fs.writeFileSync(genesisFile, JSON.stringify(summary.genesis_account, null, 2));
+            console.log(`✓ Generated genesis account`);
         }
 
-        // Write summary file
-        fs.writeFileSync(
-            path.join(outputDir, 'keys-summary.json'),
-            JSON.stringify(summary, null, 2)
-        );
+        // Save summary
+        const summaryFile = path.join(outputDir, 'keys-summary.json');
+        fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
+        
+        // Create a simple text summary for easy reading
+        const readmePath = path.join(outputDir, 'README.txt');
+        const readmeContent = `Mitum Keys Generated
+====================
+Date: ${summary.generated_at}
+Network ID: ${options.networkId}
+Node Count: ${options.nodeCount}
+Key Type: ${options.type}
+Threshold: ${options.threshold}%
 
-        // Write summary in YAML format for Ansible
-        const yamlSummary = generateYAML(summary);
-        fs.writeFileSync(
-            path.join(outputDir, 'keys-summary.yml'),
-            yamlSummary
-        );
+Node Keys:
+${summary.nodes.map(n => `- ${n.node_name}: ${n.address}`).join('\n')}
 
-        // Output summary to stdout for Ansible to capture
+${summary.genesis_account ? `Genesis Account:
+Address: ${summary.genesis_account.address}
+Threshold: ${summary.genesis_account.threshold}%` : ''}
+
+Files Generated:
+- keys-summary.json : Complete summary in JSON format
+- node*.json : Individual node key files
+- node*-private.pem : Private keys in PEM format
+${summary.genesis_account ? '- genesis-account.json : Genesis account details' : ''}
+
+IMPORTANT: Keep these files secure! Private keys should never be shared.
+`;
+        fs.writeFileSync(readmePath, readmeContent);
+        
+        console.log(`\n✅ Key generation complete!`);
+        console.log(`📁 Files saved to: ${outputDir}`);
+        console.log(`📄 Summary: ${summaryFile}`);
+        
+        // Display summary
         console.log('\n--- Key Generation Summary ---');
-        console.log(JSON.stringify(summary));
-
-        return summary;
-    } catch (error) {
-        console.error('Error during key generation:', error.message);
-        throw error;
-    }
-}
-
-// Fallback keypair generation if MitumJS fails
-function generateFallbackKeypair(index) {
-    const timestamp = Date.now();
-    const random = crypto.randomBytes(32).toString('hex');
-    
-    return {
-        privateKey: `FALLBACK${random}${index}mpr`,
-        publicKey: `PUB${random.substring(0, 40)}${index}mpr`,
-        type: 'btc'
-    };
-}
-
-// Generate YAML format for Ansible
-function generateYAML(obj) {
-    let yaml = '---\n';
-    yaml += `# Generated by mitum-keygen.js\n`;
-    yaml += `# Network: ${obj.network_id}\n`;
-    yaml += `# Generated at: ${obj.generated_at}\n\n`;
-    
-    yaml += `network_id: "${obj.network_id}"\n`;
-    yaml += `node_count: ${obj.node_count}\n`;
-    yaml += `threshold: ${obj.threshold}\n`;
-    yaml += `key_type: "${obj.key_type}"\n\n`;
-    
-    yaml += `nodes:\n`;
-    for (const node of obj.nodes) {
-        yaml += `  - node_id: ${node.node_id}\n`;
-        yaml += `    address: "${node.address}"\n`;
-        yaml += `    public_key: "${node.public_key}"\n`;
-        yaml += `    type: "${node.type}"\n`;
-    }
-    
-    if (obj.genesis_account) {
-        yaml += `\ngenesis_account:\n`;
-        yaml += `  address: "${obj.genesis_account.address}"\n`;
-        yaml += `  threshold: ${obj.genesis_account.threshold}\n`;
-        yaml += `  keys:\n`;
-        for (const key of obj.genesis_account.keys) {
-            yaml += `    - key: "${key.key}"\n`;
-            yaml += `      weight: ${key.weight}\n`;
+        console.log(`Network ID: ${summary.network_id}`);
+        console.log(`Nodes: ${summary.node_count}`);
+        console.log(`Type: ${summary.key_type}`);
+        if (summary.genesis_account) {
+            console.log(`\nGenesis Account: ${summary.genesis_account.address}`);
+            console.log(`Threshold: ${summary.genesis_account.threshold}%`);
         }
+
+    } catch (error) {
+        console.error('\n❌ Error during key generation:', error);
+        console.error('Stack trace:', error.stack);
+        process.exit(1);
     }
-    
-    return yaml;
 }
 
-// Main execution
-try {
-    const result = generateKeys();
-    console.log('\n✓ Key generation completed successfully');
-    console.log(`✓ Keys saved to: ${outputDir}`);
-    process.exit(0);
-} catch (error) {
-    console.error('Error generating keys:', error.message);
-    console.error(error.stack);
+// Run key generation
+generateKeys().catch(error => {
+    console.error('Fatal error:', error);
     process.exit(1);
-}
+});

@@ -123,6 +123,7 @@
         dest: "{{ playbook_dir }}/../reports/deployment-{{ deployment_id }}.txt"
       delegate_to: localhost
       run_once: true
+      when: deployment_report_enabled | default(true)
 
     - name: Display deployment summary
       debug:
@@ -163,17 +164,30 @@
           ========================================
           DEPLOYMENT FAILED!
           ========================================
-          Error in: {{ ansible_failed_task.name | default('Unknown task') }}
-          Host: {{ ansible_hostname | default('Unknown host') }}
+          Error occurred during deployment.
+          Check logs at: {{ log_dir | default('/var/log/mitum') }}/deployment-{{ deployment_id }}.log
           
-          Please check:
-          1. Ansible logs: logs/ansible.log
-          2. Host connectivity: make test
-          3. Requirements: make validate
+          Failed task: {{ ansible_failed_task.name | default('Unknown') }}
+          Host: {{ ansible_failed_host | default('Unknown') }}
           
-          Rollback instructions:
-          1. Restore from backup: make restore BACKUP_TIMESTAMP=<timestamp>
-          2. Or clean install: make clean-data && make deploy
+          Troubleshooting:
+          1. Review the error message above
+          2. Check connectivity: make test
+          3. Validate configuration: make validate
+          4. Review logs: make logs
           ========================================
       when: ansible_failed_task is defined
+      run_once: true
+
+    - name: Create failure report
+      copy:
+        content: |
+          Deployment Failed: {{ deployment_id }}
+          Time: {{ ansible_date_time.iso8601 }}
+          Failed Task: {{ ansible_failed_task.name | default('Unknown') }}
+          Host: {{ ansible_failed_host | default('Unknown') }}
+          Error: {{ ansible_failed_result.msg | default('Unknown error') }}
+        dest: "{{ playbook_dir }}/../reports/failure-{{ deployment_id }}.txt"
+      when: ansible_failed_task is defined
+      delegate_to: localhost
       run_once: true

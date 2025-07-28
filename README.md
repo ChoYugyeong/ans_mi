@@ -1,313 +1,392 @@
-# Mitum Ansible
+# AWX Integration for Mitum Ansible
 
-<p align="center">
-  <img src="docs/images/mitum-logo.png" alt="Mitum Logo" width="200">
-</p>
+This directory contains AWX/Tower integration files for enterprise-grade Mitum blockchain management.
 
-<p align="center">
-  <strong>Enterprise-grade Mitum Blockchain Automated Deployment & Management Tool</strong>
-</p>
+## Overview
 
-<p align="center">
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#documentation">Documentation</a> •
-  <a href="#contributing">Contributing</a>
-</p>
+AWX provides:
+- Web-based UI for Ansible playbook execution
+- Role-based access control (RBAC)
+- Job scheduling and automation
+- Real-time job output and logging
+- REST API for integration
+- Webhook support for event-driven automation
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Ansible-2.13+-red.svg" alt="Ansible">
-  <img src="https://img.shields.io/badge/Python-3.6+-blue.svg" alt="Python">
-  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
-  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey.svg" alt="Platform">
-</p>
+## Directory Structure
 
----
-
-## 🎯 Overview
-
-Mitum Ansible is a powerful automation tool for deploying and managing Mitum blockchain nodes. Deploy clusters from 3 to 100+ nodes in minutes with integrated monitoring, backup, and security features.
-
-### Why Mitum Ansible?
-
-- **⚡ Fast Deployment**: Deploy entire clusters in under 15 minutes without complex configuration
-- **🔧 Flexible Configuration**: Dynamically adjust node count, IPs, and network settings
-- **🔒 Enterprise Security**: SSL/TLS, firewall, Vault integration, SSH multiplexing
-- **📊 Real-time Monitoring**: Included Prometheus & Grafana dashboards
-- **🤖 Fully Automated**: From key generation to backups, everything is automated
-
-## 🚀 Quick Start
-
-### Getting Started (5 minutes)
-
-```bash
-# 1. Clone repository
-git clone https://github.com/your-org/mitum-ansible.git
-cd mitum-ansible
-
-# 2. Auto setup (includes dependency installation)
-make setup
-
-# 3. Start interactive deployment
-make interactive-setup
+```
+awx/
+├── README.md                    # This file
+├── job_templates/              # Job template definitions
+│   ├── deploy_mitum.json       # Main deployment template
+│   ├── rolling_upgrade.json    # Zero-downtime upgrade
+│   ├── health_check.json       # Health validation
+│   └── recovery.json           # Automated recovery
+├── workflows/                  # Workflow definitions
+│   └── automated_recovery.json # Recovery workflow
+├── surveys/                    # Survey specifications
+│   ├── deployment_survey.json  # Deployment options
+│   └── upgrade_survey.json     # Upgrade parameters
+└── scripts/                    # Helper scripts
+    └── import_templates.sh     # Import templates to AWX
 ```
 
-### First Deployment
+## Prerequisites
+
+1. **AWX Installation**
+   - AWX 19.0+ or Ansible Tower 3.8+
+   - PostgreSQL database
+   - Redis for caching
+
+2. **AWX CLI**
+   ```bash
+   pip install awxkit
+   ```
+
+3. **API Token**
+   - Create in AWX UI: Settings → Users → Tokens
+   - Export: `export AWX_TOKEN=your-token`
+
+## Setup Instructions
+
+### 1. Configure AWX Connection
 
 ```bash
-# Add SSH key
-./scripts/manage-keys.sh add production ~/your-key.pem
+# Set environment variables
+export AWX_URL=https://awx.example.com
+export AWX_TOKEN=your-token-here
 
-# Deploy 5-node cluster
-make deploy NODE_COUNT=5 BASTION_IP=52.74.123.45
+# Test connection
+awx config
 ```
 
-## 🌟 Features
-
-### Core Features
-
-| Feature | Description |
-|---------|-------------|
-| **🔢 Dynamic Node Configuration** | Configure 3-100+ nodes freely |
-| **🌐 Multi-Cloud** | Support for AWS, GCP, Azure, On-premises |
-| **🛡️ Enhanced Security** | Automatic SSL/TLS, firewall, SSH key management |
-| **📈 Monitoring** | Integrated Prometheus, Grafana, AlertManager |
-| **💾 Auto Backup** | Scheduled backup and recovery |
-| **🎛️ AWX Integration** | Web UI management (optional) |
-| **🔄 SSH Multiplexing** | Optimized SSH connections for faster deployments |
-
-### Supported Environments
-
-- **Operating Systems**: Ubuntu 18.04+, CentOS 7+, macOS 10.14+
-- **Cloud**: AWS EC2, Google Cloud, Azure VM
-- **On-premises**: Any Linux server
-
-## 📦 Installation
-
-### Requirements
-
-- Python 3.6+
-- SSH access permissions
-- Minimum 4GB RAM, 20GB disk (per node)
-
-### Installation Methods
-
-#### Option 1: Auto Installation (Recommended)
-```bash
-make setup
-```
-
-#### Option 2: Manual Installation
-```bash
-# Install Ansible
-pip3 install -r requirements.txt
-
-# Install Ansible collections
-ansible-galaxy install -r requirements.yml
-```
-
-## 📖 Usage
-
-### 1. Generate Inventory
-
-#### Interactive Mode (Recommended)
-```bash
-make interactive-setup
-```
-
-#### Command Line Mode
-```bash
-./scripts/generate-inventory.sh \
-  --nodes 5 \
-  --bastion-ip 52.74.123.45 \
-  --node-ips 10.0.1.10,10.0.1.11,10.0.1.12,10.0.1.13,10.0.1.14
-```
-
-### 2. Deploy
+### 2. Create Organization and Team
 
 ```bash
-# Production deployment
-make deploy ENV=production
+# Create organization
+awx organizations create \
+  --name "Mitum Operations" \
+  --description "Mitum blockchain management"
 
-# Staging deployment (with monitoring)
-make deploy ENV=staging MONITORING=yes
-
-# Development environment (using Docker)
-make deploy ENV=development DOCKER=yes
+# Create team
+awx teams create \
+  --name "Mitum Admins" \
+  --organization "Mitum Operations"
 ```
 
-### 3. Management Commands
+### 3. Import Inventory
 
 ```bash
-# Check status
-make status
+# Create inventory
+awx inventories create \
+  --name "Mitum Production" \
+  --organization "Mitum Operations" \
+  --variables @inventories/production/group_vars/all.yml
 
-# Create backup
-make backup
-
-# View logs
-make logs
-
-# Stop/Start cluster
-make stop
-make start
-
-# Update configuration
-make update-config
+# Import hosts
+awx inventory_sources create \
+  --name "Mitum Nodes" \
+  --inventory "Mitum Production" \
+  --source "scm" \
+  --source_path "inventories/production/hosts.yml"
 ```
 
-## 🔧 Configuration Options
+### 4. Create Project
 
-### Node Configuration
+```bash
+# Create project
+awx projects create \
+  --name "Mitum Ansible" \
+  --organization "Mitum Operations" \
+  --scm_type "git" \
+  --scm_url "https://github.com/your-org/mitum-ansible.git" \
+  --scm_branch "main" \
+  --scm_update_on_launch true
+```
+
+### 5. Import Job Templates
+
+```bash
+# Import all templates
+./awx/scripts/import_templates.sh
+
+# Or import individually
+awx import < awx/job_templates/deploy_mitum.json
+awx import < awx/job_templates/rolling_upgrade.json
+awx import < awx/job_templates/health_check.json
+awx import < awx/job_templates/recovery.json
+```
+
+### 6. Create Workflows
+
+```bash
+# Import recovery workflow
+awx import < awx/workflows/automated_recovery.json
+```
+
+## Job Templates
+
+### Deploy Mitum
+- **Purpose**: Full cluster deployment
+- **Playbook**: `playbooks/deploy-mitum.yml`
+- **Survey**: Deployment options (node count, network ID)
+- **Credentials**: SSH, Vault
+
+### Rolling Upgrade
+- **Purpose**: Zero-downtime version upgrade
+- **Playbook**: `playbooks/rolling-upgrade.yml`
+- **Survey**: Version selection, maintenance window
+- **Features**: 
+  - Pre-flight checks
+  - Sequential consensus node updates
+  - API node maintenance mode
+
+### Health Check
+- **Purpose**: Cluster validation
+- **Playbook**: `playbooks/validate.yml`
+- **Schedule**: Every 5 minutes
+- **Notifications**: Slack, email on failure
+
+### Recovery
+- **Purpose**: Automated node recovery
+- **Playbook**: `playbooks/recovery.yml`
+- **Trigger**: Webhook from monitoring
+- **Actions**: Restart, resync, or full recovery
+
+## Workflows
+
+### Automated Recovery Workflow
+
+```
+Prometheus Alert
+    ↓
+Health Check Job
+    ↓
+[Success] ← → [Failure]
+              ↓
+         Recovery Job
+              ↓
+    [Success] ← → [Failure]
+                     ↓
+              Escalation
+```
+
+## Webhook Integration
+
+### Configure Prometheus Alertmanager
 
 ```yaml
-# inventories/production/group_vars/all.yml
-mitum_nodes:
-  total_count: 5
-  consensus_nodes: 4
-  api_nodes: 1
-  
-mitum_network:
-  id: "mainnet"
-  genesis_time: "2024-01-01T00:00:00Z"
+# alertmanager.yml
+receivers:
+  - name: 'awx-webhook'
+    webhook_configs:
+      - url: 'https://awx.example.com/api/v2/job_templates/123/launch/'
+        http_config:
+          bearer_token: 'your-awx-token'
 ```
 
-### Security Settings
+### Webhook Payload
 
-```yaml
-# Enable firewall
-security_firewall_enabled: true
-
-# SSL/TLS configuration
-security_ssl_enabled: true
-security_ssl_cert_path: "/etc/ssl/certs/mitum.crt"
-
-# Vault integration
-security_vault_enabled: true
-security_vault_address: "https://vault.example.com"
-
-# SSH multiplexing
-ssh_multiplexing_enabled: true
-ssh_control_persist: "10m"
+```json
+{
+  "extra_vars": {
+    "alert_name": "{{ .GroupLabels.alertname }}",
+    "node_name": "{{ .Labels.instance }}",
+    "severity": "{{ .Labels.severity }}",
+    "recovery_action": "auto"
+  }
+}
 ```
 
-## 📊 Monitoring
+## Survey Examples
 
-### Grafana Dashboard
+### Deployment Survey
 
-Access dashboard after deployment:
-- URL: `http://BASTION_IP:3000`
-- Default credentials: admin / admin
+```json
+{
+  "name": "Deployment Options",
+  "spec": [
+    {
+      "question_name": "Network ID",
+      "variable": "mitum_network_id",
+      "type": "text",
+      "default": "mitum",
+      "required": true
+    },
+    {
+      "question_name": "Node Count",
+      "variable": "node_count",
+      "type": "integer",
+      "min": 3,
+      "max": 100,
+      "default": 5
+    }
+  ]
+}
+```
 
-### Collected Metrics
+## Monitoring Dashboard
 
-- Node status and performance
-- Transaction throughput
-- Consensus latency
-- System resource usage
+AWX provides built-in dashboards for:
+- Job success/failure rates
+- Average job duration
+- Resource utilization
+- User activity
 
-## 🔒 Security
+### Custom Dashboard Queries
 
-### Security Best Practices
+```sql
+-- Failed jobs in last 24 hours
+SELECT count(*) 
+FROM main_job 
+WHERE status = 'failed' 
+  AND created > NOW() - INTERVAL '24 hours';
 
-1. **SSH Key Management**
-   ```bash
-   # Set key permissions
-   chmod 600 keys/ssh/production/*.pem
-   ```
+-- Average deployment time
+SELECT AVG(EXTRACT(EPOCH FROM (finished - created))) as avg_seconds
+FROM main_job
+WHERE job_template_id = 123
+  AND status = 'successful';
+```
 
-2. **Use Vault**
-   ```bash
-   # Encrypt secrets
-   ansible-vault encrypt inventories/production/group_vars/vault.yml
-   ```
+## Best Practices
 
-3. **Regular Updates**
-   ```bash
-   # Apply security patches
-   make security-update
-   ```
+1. **Credentials Management**
+   - Use AWX credential types
+   - Rotate tokens regularly
+   - Separate prod/staging credentials
 
-## 🐛 Troubleshooting
+2. **Job Template Design**
+   - Use surveys for user input
+   - Set appropriate timeouts
+   - Enable concurrent jobs carefully
+
+3. **Workflow Optimization**
+   - Chain related jobs
+   - Use conditional paths
+   - Add approval nodes for critical ops
+
+4. **Monitoring Integration**
+   - Configure notifications
+   - Set up webhook receivers
+   - Create custom alerts
+
+5. **Security**
+   - Enable RBAC
+   - Audit job executions
+   - Use encrypted variables
+
+## Troubleshooting
 
 ### Common Issues
 
-<details>
-<summary>Node won't start</summary>
+1. **Job fails with "Host unreachable"**
+   ```bash
+   # Check SSH connectivity
+   awx ad_hoc_commands create \
+     --inventory "Mitum Production" \
+     --module_name ping
+   ```
+
+2. **Slow job execution**
+   - Enable fact caching
+   - Use mitogen strategy
+   - Optimize gather_facts
+
+3. **Webhook not triggering**
+   - Verify token permissions
+   - Check webhook logs
+   - Test with curl
+
+### Debug Commands
 
 ```bash
-# Test connection
-make test ENV=production
+# View job output
+awx jobs get <job_id>
 
-# Check detailed logs
-ansible-playbook -vvv playbooks/deploy-mitum.yml
+# List recent failures
+awx jobs list --status failed --created__gt $(date -d '1 day ago' -Iseconds)
+
+# Export job logs
+awx jobs stdout <job_id> > job_output.txt
 ```
-</details>
 
-<details>
-<summary>MongoDB connection failure</summary>
+## API Examples
+
+### Launch Job via API
 
 ```bash
-# Check MongoDB status
-make check-mongodb
-
-# Check firewall rules
-sudo iptables -L -n | grep 27017
-```
-</details>
-
-### Debugging
-
-```bash
-# Generate diagnostic report
-./scripts/diagnostic-report.sh
-
-# Run specific tasks
-make deploy TAGS=mongodb
+curl -X POST https://awx.example.com/api/v2/job_templates/123/launch/ \
+  -H "Authorization: Bearer $AWX_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "extra_vars": {
+      "mitum_version": "3.0.0",
+      "target_nodes": "mitum-node-01,mitum-node-02"
+    }
+  }'
 ```
 
-## 📚 Documentation
+### Monitor Job Progress
 
-- [Detailed Installation Guide](docs/INSTALL.md)
-- [Configuration Guide](docs/CONFIGURATION.md)
-- [Operations Guide](docs/OPERATIONS.md)
-- [Troubleshooting Guide](docs/TROUBLESHOOTING.md)
-- [API Reference](docs/API.md)
+```python
+import requests
+import time
 
-## 🤝 Contributing
-
-Contributions are welcome! Please see our [Contributing Guidelines](CONTRIBUTING.md).
-
-### Development Setup
-
-```bash
-# Setup development environment
-make dev-setup
-
-# Run tests
-make test
-
-# Code quality check
-make lint
+def monitor_job(job_id, token, awx_url):
+    headers = {'Authorization': f'Bearer {token}'}
+    
+    while True:
+        response = requests.get(
+            f'{awx_url}/api/v2/jobs/{job_id}/',
+            headers=headers
+        )
+        job = response.json()
+        
+        print(f"Status: {job['status']}")
+        
+        if job['status'] in ['successful', 'failed', 'canceled']:
+            break
+            
+        time.sleep(5)
+    
+    return job['status']
 ```
 
-## 📄 License
+## Integration with CI/CD
 
-This project is licensed under the [MIT License](LICENSE).
+### GitLab CI Example
 
-## 🙏 Acknowledgments
+```yaml
+deploy_mitum:
+  stage: deploy
+  script:
+    - |
+      JOB_ID=$(curl -s -X POST $AWX_URL/api/v2/job_templates/$TEMPLATE_ID/launch/ \
+        -H "Authorization: Bearer $AWX_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"extra_vars": {"version": "'$CI_COMMIT_TAG'"}}' \
+        | jq -r '.id')
+    - |
+      while true; do
+        STATUS=$(curl -s $AWX_URL/api/v2/jobs/$JOB_ID/ \
+          -H "Authorization: Bearer $AWX_TOKEN" \
+          | jq -r '.status')
+        echo "Job status: $STATUS"
+        [[ "$STATUS" == "successful" ]] && exit 0
+        [[ "$STATUS" == "failed" ]] && exit 1
+        sleep 10
+      done
+  only:
+    - tags
+```
 
-- Mitum Development Team
-- Ansible Community
-- All Contributors
+## Resources
+
+- [AWX Documentation](https://docs.ansible.com/ansible-tower/)
+- [AWX API Reference](https://docs.ansible.com/ansible-tower/latest/html/towerapi/index.html)
+- [Mitum Ansible Repository](https://github.com/your-org/mitum-ansible)
 
 ---
 
-<p align="center">
-  <strong>Need help or support?</strong><br>
-  <a href="https://github.com/your-org/mitum-ansible/issues">Create Issue</a> •
-  <a href="https://discord.gg/mitum">Join Discord</a> •
-  <a href="mailto:support@mitum.com">Email Support</a>
-</p>
+For support, contact the Mitum Operations team or create an issue in the repository.
