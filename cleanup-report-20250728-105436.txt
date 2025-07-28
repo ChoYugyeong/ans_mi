@@ -1,0 +1,12 @@
+Mitum Ansible Cleanup Report
+Generated: Mon Jul 28 10:54:36 KST 2025
+================================
+
+Files Removed: 3
+Directories Removed: 0
+Total Space Freed: 36KB
+
+Removed Items:
+- [FILE] scripts/optimize-project.sh
+- [FILE] scripts/master-cleanup.sh
+- [FILE] scripts/generate-group-vars.sh

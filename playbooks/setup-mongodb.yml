@@ -1,0 +1,25 @@
+---
+# MongoDB Setup Playbook
+# This playbook handles MongoDB installation and configuration for Mitum nodes
+
+- name: Setup MongoDB
+  hosts: mitum_nodes
+  become: true
+  gather_facts: true
+  tags: [mongodb, database]
+  vars:
+    # MongoDB configuration variables
+    mitum_mongodb_install_method: "{{ mitum_mongodb_install_method | default('native') }}"
+    mitum_mongodb_version: "{{ mitum_mongodb_version | default('7.0') }}"
+    mitum_mongodb_port: "{{ mitum_mongodb_port | default(27017) }}"
+    mitum_mongodb_bind_ip: "{{ mitum_mongodb_bind_ip | default('127.0.0.1') }}"
+    mitum_mongodb_replica_set: "{{ mitum_mongodb_replica_set | default('mitum') }}"
+    mitum_mongodb_auth_enabled: "{{ mitum_mongodb_auth_enabled | default(true) }}"
+    mitum_mongodb_admin_user: "{{ mitum_mongodb_admin_user | default('admin') }}"
+    mitum_mongodb_admin_password: "{{ mitum_mongodb_admin_password | default('changeme') }}"
+    mitum_mongodb_user: "{{ mitum_mongodb_user | default('mitum') }}"
+    mitum_mongodb_password: "{{ mitum_mongodb_password | default('mitum123') }}"
+    mitum_mongodb_keyfile: "{{ mitum_mongodb_keyfile | default('/var/lib/mongodb/keyfile') }}"
+  tasks:
+    - name: Include MongoDB setup tasks
+      include_tasks: ../roles/mitum/tasks/mongodb.yml 

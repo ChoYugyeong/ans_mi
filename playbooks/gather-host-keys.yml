@@ -1,0 +1,38 @@
+---
+# Playbook to gather SSH host keys and prevent man-in-the-middle attacks
+# Version: 1.0.0
+#
+# This playbook performs the following actions:
+# 1. Gathers SSH host keys from all nodes in the inventory.
+# 2. Adds the keys to the local known_hosts file for the user running Ansible.
+# 3. Ensures secure, verified connections for subsequent Ansible tasks.
+
+- name: Gather and verify SSH host keys for all nodes
+  hosts: all
+  gather_facts: false
+  connection: local
+  become: false
+
+  tasks:
+    - name: Ensure ~/.ssh directory exists
+      file:
+        path: "~/.ssh"
+        state: directory
+        mode: '0700'
+      tags: [ssh, security]
+
+    - name: Scan for SSH host keys and add to known_hosts
+      shell: "ssh-keyscan -H {{ item }} >> ~/.ssh/known_hosts"
+      loop: "{{ ansible_play_hosts_all }}"
+      args:
+        warn: false
+      changed_when: false
+      register: keyscan_result
+      failed_when: keyscan_result.rc != 0 and "exit status 1" not in keyscan_result.stderr
+      tags: [ssh, security]
+
+    - name: Display results of SSH key scan
+      debug:
+        msg: "Successfully added SSH host keys for {{ ansible_play_hosts_all | length }} hosts."
+      run_once: true
+      tags: [ssh, security] 

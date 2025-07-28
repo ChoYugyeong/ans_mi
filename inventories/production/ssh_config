@@ -1,35 +1,47 @@
-# SSH configuration for production environment
-# Generated: Wed Jul 23 15:28:54 KST 2025
+# SSH Configuration for production environment
+# Generated: 2025-07-28 04:24:12 UTC
 
-Host bastion
+# Global settings
+Host *
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    TCPKeepAlive yes
+    Compression yes
+    
+# SSH Multiplexing
+Host *
+    ControlMaster auto
+    ControlPath ~/.ansible/cp/%h-%p-%r
+    ControlPersist 10m
+
+# Bastion host
+Host bastion mitum-bastion
     HostName 3.34.138.191
     User ubuntu
+    Port 22
     IdentityFile /Users/user/Desktop/mitum-ansible-deploy/mitum-ansible/keys/ssh/production/bastion.pem
-    ForwardAgent yes
-    ControlMaster auto
-    ControlPath ~/.ssh/mitum-%r@%h:%p
-    ControlPersist 30m
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts_mitum
 
-Host node0
-    HostName 192.168.50.88
+# Mitum nodes
+Host node* mitum-node-*
+    User ubuntu
+    Port 22
+    ProxyJump bastion
+    IdentityFile /Users/user/Desktop/mitum-ansible-deploy/mitum-ansible/keys/ssh/production/nodes.pem
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts_mitum
+
+# Direct node access (for specific IPs)
+Host 192.168.50.88
     User ubuntu
     ProxyJump bastion
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-
-Host node1
-    HostName 192.168.50.89
+    IdentityFile /Users/user/Desktop/mitum-ansible-deploy/mitum-ansible/keys/ssh/production/nodes.pem
+Host 192.168.50.89
     User ubuntu
     ProxyJump bastion
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-
-Host node2
-    HostName 192.168.50.90
+    IdentityFile /Users/user/Desktop/mitum-ansible-deploy/mitum-ansible/keys/ssh/production/nodes.pem
+Host 192.168.50.90
     User ubuntu
     ProxyJump bastion
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-
+    IdentityFile /Users/user/Desktop/mitum-ansible-deploy/mitum-ansible/keys/ssh/production/nodes.pem

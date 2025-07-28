@@ -1,17 +1,46 @@
 #!/bin/bash
-# deploy-mitum.sh - Enhanced Mitum deployment script for beginners
-# Version: 4.0.0 - Improved with better UX and integration with Makefile
-#
-# This script provides a user-friendly way to deploy Mitum blockchain
-# It can be used standalone or in conjunction with Makefile commands
-#
-# Features:
-# - Interactive mode for beginners
-# - Automatic prerequisite checking
-# - Integration with Makefile commands
-# - Clear error messages and guidance
+# Mitum Deployment Script
+# Version: 1.2.0 - Enhanced root detection and error handling
 
+# Strict error handling
 set -euo pipefail
+
+# Find the actual project root by looking for characteristic files
+# This makes the script runnable from any directory
+CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR=""
+while [[ "$CURRENT_DIR" != "/" ]]; do
+    if [[ -f "$CURRENT_DIR/ansible.cfg" ]] && [[ -f "$CURRENT_DIR/Makefile" ]]; then
+        ROOT_DIR="$CURRENT_DIR"
+        break
+    fi
+    CURRENT_DIR="$(dirname "$CURRENT_DIR")"
+done
+
+if [[ -z "$ROOT_DIR" ]]; then
+    echo "Error: Could not find the project root directory. Make sure you are running this script from within the mitum-ansible project." >&2
+    exit 1
+fi
+
+# Set script directory relative to the now known ROOT_DIR
+SCRIPT_DIR="${ROOT_DIR}/scripts"
+
+# Source common functions
+# shellcheck source=lib/common.sh
+source "${SCRIPT_DIR}/lib/common.sh" || {
+    echo "Error: Cannot load common functions library from ${SCRIPT_DIR}/lib/common.sh" >&2
+    exit 1
+}
+
+# === Script Initialization ===
+LOG_DIR="${ROOT_DIR}/logs"
+TEMP_DIR="${ROOT_DIR}/.tmp"
+
+ensure_directory "$LOG_DIR"
+ensure_directory "$TEMP_DIR"
+
+export LOG_FILE="${LOG_FILE:-${LOG_DIR}/$(basename "$0" .sh).log}"
+# === End Initialization ===
 
 # Colors for better readability
 RED='\033[0;31m'
@@ -23,8 +52,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Script configuration
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+# ROOT_DIR="$(dirname "$SCRIPT_DIR")" # This line is now redundant as ROOT_DIR is set above
 MAKEFILE="$ROOT_DIR/Makefile"
 
 # Default values

@@ -36,12 +36,11 @@
       set_fact:
         root_disk_free_gb: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/') | first).size_available / 1024 / 1024 / 1024 | round(2) }}"
 
-    - name: Verify sufficient disk space
+    - name: Validate minimum disk space
       assert:
         that:
-          - root_disk_free_gb | float >= 20
-        fail_msg: "Insufficient disk space: {{ root_disk_free_gb }}GB free (minimum 20GB required)"
-        success_msg: "Disk space OK: {{ root_disk_free_gb }}GB free"
+          - ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first | int > ( (min_disk_space_gb | default(20)) * 1024 * 1024 * 1024)
+        fail_msg: "Insufficient disk space. Required: {{ min_disk_space_gb | default(20) }}GB, Available: {{ (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first | int / (1024*1024*1024)) | round(2) }}GB"
 
     # === Memory Check ===
     - name: Check available memory

@@ -1,6 +1,6 @@
 ---
 # Dynamic Inventory Generation Playbook
-# This playbook generates Ansible inventory files based on user input from AWX surveys
+# This playbook generates Ansible inventory files based on user input
 
 - name: Generate Dynamic Inventory for Mitum Deployment
   hosts: localhost
@@ -8,222 +8,114 @@
   connection: local
   
   vars:
-    # Default values if not provided
-    target_environment: "{{ target_environment | default('production') }}"
-    total_node_count: "{{ total_node_count | default(5) }}"
-    ip_config_method: "{{ ip_config_method | default('manual_list') }}"
-    ssh_username: "{{ ssh_username | default('ubuntu') }}"
-    mitum_network_id: "{{ mitum_network_id | default('mitum') }}"
-    mitum_model_type: "{{ mitum_model_type | default('mitum-currency') }}"
-    node_subnet_base: "{{ node_subnet_base | default('10.0.1') }}"
-    subnet_start_ip: "{{ subnet_start_ip | default(10) }}"
+    # Variables from interactive-setup.sh (with defaults)
+    target_environment: "{{ env | default('production') }}"
+    total_node_count: "{{ total_nodes | default(3) }}"
+    ssh_username: "{{ ssh_user | default('ubuntu') }}"
+    bastion_host_ip: "{{ bastion_ip | default('') }}"
+    bastion_ssh_key: "{{ bastion_key_path | default('') }}"
+    nodes_ssh_key: "{{ nodes_key_path | default('') }}"
     
-    # Calculated variables
+    # Network configuration
+    ip_method: "{{ ip_config_method | default('manual') }}"
+    manual_node_ips: "{{ node_ips_list | default('') }}"
+    subnet_base: "{{ node_subnet | default('') }}"
+    
+    # Mitum configuration
+    mitum_net_id: "{{ network_id | default('mitum') }}"
+    mitum_model: "{{ model_type | default('mitum-currency') }}"
+    
+    # Features
+    enable_monitoring: "{{ monitoring_enabled | default('no') }}"
+    monitoring_host_ip: "{{ monitoring_ip | default('') }}"
+    enable_backup: "{{ backup_enabled | default('no') }}"
+    enable_ssl: "{{ ssl_enabled | default('no') }}"
+    
+    # Calculated paths
     inventory_path: "inventories/{{ target_environment }}/hosts.yml"
     group_vars_path: "inventories/{{ target_environment }}/group_vars/all.yml"
-    consensus_count: "{{ ((total_node_count | int * 0.8) | round(0, 'ceil')) | int }}"
     
   tasks:
     - name: Display configuration summary
       debug:
         msg: |
           ========================================
-          Dynamic Inventory Generation
+          Mitum Inventory Generation
           ========================================
           Environment: {{ target_environment }}
-          Total Nodes: {{ total_node_count }}
-          Consensus Nodes: {{ consensus_count }}
-          IP Method: {{ ip_config_method }}
-          Network ID: {{ mitum_network_id }}
-          Model Type: {{ mitum_model_type }}
+          Node Count: {{ total_node_count }}
+          IP Method: {{ ip_method }}
+          Bastion IP: {{ bastion_host_ip if bastion_host_ip else '(none)' }}
+          SSH User: {{ ssh_username }}
+          Network ID: {{ mitum_net_id }}
+          Model Type: {{ mitum_model }}
+          Monitoring: {{ enable_monitoring }}
           ========================================
 
-    - name: Validate required variables
-      assert:
-        that:
-          - bastion_public_ip is defined and bastion_public_ip | length > 0
-          - total_node_count | int >= 3
-          - total_node_count | int <= 50
-        fail_msg: "Required variables are missing or invalid"
-        success_msg: "Configuration validation passed"
-
-    - name: Generate node IP list based on method
-      block:
-        - name: Process manual IP list
-          set_fact:
-            node_ip_list: "{{ manual_node_ips.split(',') | map('trim') | list }}"
-          when: ip_config_method == 'manual_list' and manual_node_ips is defined
-
-        - name: Validate manual IP count
-          assert:
-            that:
-              - node_ip_list | length == total_node_count | int
-            fail_msg: "Number of manual IPs ({{ node_ip_list | length }}) doesn't match node count ({{ total_node_count }})"
-          when: ip_config_method == 'manual_list'
-
-        - name: Generate subnet-based IPs
-          set_fact:
-            node_ip_list: "{{ node_ip_list | default([]) + [node_subnet_base + '.' + (subnet_start_ip | int + item) | string] }}"
-          loop: "{{ range(0, total_node_count | int) | list }}"
-          when: ip_config_method == 'subnet_auto'
-
-        - name: Discover AWS instances
-          ec2_instance_info:
-            region: "{{ aws_region | default('us-west-2') }}"
-            filters:
-              "tag:{{ aws_tag_filter.split('=')[0] }}": "{{ aws_tag_filter.split('=')[1] }}"
-              instance-state-name: running
-          register: aws_instances
-          when: ip_config_method == 'aws_auto'
-
-        - name: Extract AWS IPs
-          set_fact:
-            node_ip_list: "{{ aws_instances.instances | map(attribute='private_ip_address') | list }}"
-          when: ip_config_method == 'aws_auto' and aws_instances.instances is defined
-
-        - name: Discover GCP instances
-          gcp_compute_instance_info:
-            project: "{{ gcp_project_id }}"
-            zone: "{{ gcp_zone | default('us-central1-a') }}"
-            filters:
-              - name = mitum-node-*
-          register: gcp_instances
-          when: ip_config_method == 'gcp_auto' and gcp_project_id is defined
-
-        - name: Extract GCP IPs
-          set_fact:
-            node_ip_list: "{{ gcp_instances.resources | map(attribute='networkInterfaces') | flatten | map(attribute='networkIP') | list }}"
-          when: ip_config_method == 'gcp_auto' and gcp_instances.resources is defined
-
-    - name: Create inventory directory structure
+    - name: Ensure target environment directory exists
       file:
-        path: "{{ item }}"
+        path: "inventories/{{ target_environment }}"
         state: directory
         mode: '0755'
-      loop:
-        - "inventories/{{ target_environment }}"
-        - "inventories/{{ target_environment }}/group_vars"
-        - "inventories/{{ target_environment }}/host_vars"
 
-    - name: Generate inventory file
+    - name: Ensure group_vars directory exists
+      file:
+        path: "inventories/{{ target_environment }}/group_vars"
+        state: directory
+        mode: '0755'
+
+    - name: Parse manual node IPs
+      set_fact:
+        parsed_node_ips: "{{ manual_node_ips.split(',') if manual_node_ips else [] }}"
+      when: ip_method == 'manual'
+
+    - name: Generate subnet-based node IPs
+      set_fact:
+        parsed_node_ips: "{{ range(10, 10 + (total_node_count | int)) | map('string') | map('regex_replace', '^(.*)$', subnet_base + '.\\1') | list }}"
+      when: ip_method == 'subnet' and subnet_base
+
+    - name: Generate inventory file from template
       template:
-        src: inventory-template.yml.j2
+        src: "../roles/mitum/templates/inventory-template.yml.j2"
         dest: "{{ inventory_path }}"
         mode: '0644'
-        backup: true
       vars:
-        environment: "{{ target_environment }}"
-        bastion_ip: "{{ bastion_public_ip }}"
-        nodes: "{{ node_ip_list }}"
-        node_count: "{{ total_node_count }}"
-        consensus_nodes: "{{ consensus_count }}"
-        username: "{{ ssh_username }}"
-        network_id: "{{ mitum_network_id }}"
-        model_type: "{{ mitum_model_type }}"
+        mitum_environment: "{{ target_environment }}"
+        mitum_node_count: "{{ total_node_count }}"
+        mitum_bastion_ip: "{{ bastion_host_ip }}"
+        mitum_ssh_user: "{{ ssh_username }}"
+        mitum_network_id: "{{ mitum_net_id }}"
+        mitum_model_type: "{{ mitum_model }}"
+        mitum_bastion_key_path: "{{ bastion_ssh_key }}"
+        mitum_nodes_key_path: "{{ nodes_ssh_key }}"
+        node_ips_list: "{{ parsed_node_ips }}"
+        monitoring_enabled: "{{ enable_monitoring }}"
+        monitoring_ip: "{{ monitoring_host_ip }}"
 
-    - name: Generate group variables file
+    - name: Generate group variables file from template
       template:
-        src: group-vars-template.yml.j2
+        src: "../roles/mitum/templates/group-vars-template.yml.j2"
         dest: "{{ group_vars_path }}"
         mode: '0644'
-        backup: true
       vars:
-        environment: "{{ target_environment }}"
-        network_id: "{{ mitum_network_id }}"
-        model_type: "{{ mitum_model_type }}"
-        node_count: "{{ total_node_count }}"
+        mitum_environment: "{{ target_environment }}"
+        mitum_node_count: "{{ total_node_count }}"
+        mitum_network_id: "{{ mitum_net_id }}"
+        mitum_model_type: "{{ mitum_model }}"
+        enable_monitoring: "{{ enable_monitoring }}"
+        enable_backup: "{{ enable_backup }}"
+        enable_ssl: "{{ enable_ssl }}"
 
-    - name: Create SSH key directory
-      file:
-        path: "keys/ssh/{{ target_environment }}"
-        state: directory
-        mode: '0700'
-
-    - name: Display generation results
+    - name: Display completion message
       debug:
         msg: |
           ========================================
-          Inventory Generation Complete
+          Inventory Generation Complete!
           ========================================
-          Inventory File: {{ inventory_path }}
-          Group Variables: {{ group_vars_path }}
-          Generated {{ total_node_count }} nodes:
-          {% for ip in node_ip_list %}
-          - node{{ loop.index0 }}: {{ ip }}
-          {% endfor %}
+          Generated files:
+          - {{ inventory_path }}
+          - {{ group_vars_path }}
           
-          Bastion: {{ bastion_public_ip }}
-          Consensus Nodes: {{ consensus_count }}
-          API Nodes: {{ total_node_count | int - consensus_count }}
-          ========================================
-
-    - name: Validate generated inventory
-      command: ansible-inventory -i {{ inventory_path }} --list
-      register: inventory_validation
-      failed_when: inventory_validation.rc != 0
-
-    - name: Display inventory validation
-      debug:
-        msg: "Inventory validation successful"
-      when: inventory_validation.rc == 0
-
-    - name: Create AWX inventory from generated file
-      block:
-        - name: Create AWX inventory
-          awx.awx.inventory:
-            name: "Mitum {{ target_environment | title }}"
-            description: "Dynamically generated inventory for {{ target_environment }} environment"
-            organization: "Mitum Operations"
-            state: present
-          register: awx_inventory
-
-        - name: Import inventory hosts
-          awx.awx.inventory_source:
-            name: "Mitum {{ target_environment | title }} Hosts"
-            inventory: "Mitum {{ target_environment | title }}"
-            source: "scm"
-            source_path: "{{ inventory_path }}"
-            update_on_launch: true
-            state: present
-          when: awx_inventory is succeeded
-
-      rescue:
-        - name: AWX integration failed
-          debug:
-            msg: "AWX integration failed, but inventory file was generated successfully"
-          
-      when: "'awx' in ansible_collections"
-
-    - name: Save generation metadata
-      copy:
-        content: |
-          # Inventory Generation Metadata
-          generated_at: "{{ ansible_date_time.iso8601 }}"
-          environment: "{{ target_environment }}"
-          node_count: {{ total_node_count }}
-          consensus_count: {{ consensus_count }}
-          api_count: {{ total_node_count | int - consensus_count }}
-          network_id: "{{ mitum_network_id }}"
-          model_type: "{{ mitum_model_type }}"
-          ip_method: "{{ ip_config_method }}"
-          bastion_ip: "{{ bastion_public_ip }}"
-          node_ips:
-          {% for ip in node_ip_list %}
-          - "{{ ip }}"
-          {% endfor %}
-        dest: "inventories/{{ target_environment }}/generation-metadata.yml"
-        mode: '0644'
-
-    - name: Display next steps
-      debug:
-        msg: |
-          ========================================
-          Next Steps
-          ========================================
-          1. Review generated inventory: {{ inventory_path }}
-          2. Add SSH keys to: keys/ssh/{{ target_environment }}/
-          3. Test connectivity: make test ENV={{ target_environment }}
-          4. Deploy Mitum: make deploy ENV={{ target_environment }}
-          
-          Or use AWX job template: "Deploy Mitum Blockchain"
+          You can now deploy using:
+          ansible-playbook playbooks/site.yml -i {{ inventory_path }}
           ======================================== 

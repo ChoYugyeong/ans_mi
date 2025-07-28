@@ -1,28 +1,106 @@
 ---
-# Environment-specific variables for production
-# Generated: Wed Jul 23 15:28:54 KST 2025
+# Mitum Ansible Group Variables
+# Generated: 2025-07-28 04:24:12 UTC
+# Environment: production
 
-# Environment settings
+# === Deployment Settings ===
 mitum_environment: "production"
-mitum_network_id: "testnet"
-mitum_model_type: "mitum-currency"
+mitum_deployment_type: "cluster"
+mitum_deployment_phase: "all"
 
-# Version configuration
+# === Version Settings ===
 mitum_version: "latest"
-mitum_install_method: "source"
+mitum_install_method: "binary"
+mitum_download_url: "https://github.com/ProtoconNet/mitum2/releases/download"
 
-# Network configuration
-mitum_nodes_subnet: "192.168.50"
-mitum_bastion_host: "3.34.138.191"
-mitum_bastion_user: "ubuntu"
+# === Network Configuration ===
+mitum_network_id: "mitum"
+mitum_model_type: "mitum-currency"
+mitum_genesis_time: "2025-07-28T04:24:12Z"
 
-# SSH configuration
-mitum_ssh_via_bastion: true
-mitum_bastion_key: "keys/ssh/production/bastion.pem"
+# === Directory Structure ===
+mitum_base_dir: "/opt/mitum"
+mitum_install_dir: "{{ mitum_base_dir }}/bin"
+mitum_data_dir: "{{ mitum_base_dir }}/data"
+mitum_config_dir: "{{ mitum_base_dir }}/config"
+mitum_keys_dir: "{{ mitum_base_dir }}/keys"
+mitum_log_dir: "/var/log/mitum"
+mitum_backup_dir: "/var/backups/mitum"
 
-# Feature flags based on model
-mitum_features:
-  enable_api: true
-  enable_digest: true
-  enable_metrics: true
-  enable_profiler: false
+# === Service Configuration ===
+mitum_service_name: "mitum"
+mitum_service_user: "mitum"
+mitum_service_group: "mitum"
+mitum_service_enabled: true
+mitum_service_state: "started"
+
+# === Performance Tuning ===
+mitum_max_open_files: 65536
+mitum_tcp_keepalive: true
+mitum_connection_timeout: 30
+mitum_max_message_size: 104857600  # 100MB
+
+# === MongoDB Configuration ===
+mitum_mongodb_enabled: true
+mitum_mongodb_version: "7.0"
+mitum_mongodb_install_method: "native"
+mitum_mongodb_replica_set: "mitum-rs"
+mitum_mongodb_port: 27017
+mitum_mongodb_auth_enabled: true
+mitum_mongodb_admin_user: "admin"
+mitum_mongodb_mitum_user: "mitum"
+mitum_mongodb_data_dir: "/var/lib/mongodb"
+mitum_mongodb_log_dir: "/var/log/mongodb"
+
+# === Key Generation ===
+mitum_keygen_enabled: true
+mitum_keygen_strategy: "centralized"
+mitum_key_prefix: "mitum"
+mitum_keys_backup: true
+
+# === Monitoring Configuration ===
+mitum_monitoring:
+  enabled: true
+  prometheus_enabled: true
+  grafana_enabled: true
+  alertmanager_enabled: true
+  node_exporter_enabled: true
+  
+mitum_node_exporter_port: 9100
+mitum_metrics_port: 9090
+
+# === Backup Configuration ===
+mitum_backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_days: 7
+  compression: true
+  encryption: true
+
+# === Security Settings ===
+security_firewall_enabled: true
+security_ssl_enabled: false
+security_fail2ban_enabled: true
+security_auditd_enabled: true
+
+# === SSH Configuration ===
+ssh_hardening_enabled: true
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+ssh_x11_forwarding: "no"
+
+# === System Requirements ===
+system_packages:
+  - curl
+  - wget
+  - jq
+  - htop
+  - iotop
+  - sysstat
+  - net-tools
+  - python3
+  - python3-pip
+
+# === Ansible Settings ===
+ansible_python_interpreter: /usr/bin/python3
+ansible_ssh_pipelining: true

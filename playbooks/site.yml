@@ -25,16 +25,22 @@
 # === Set Deployment Metadata ===
 - name: Set deployment metadata
   hosts: all
+  strategy: linear
   gather_facts: false
   tags: [always]
   tasks:
     - name: Set deployment ID and timestamp
       set_fact:
         deployment_id: "{{ deployment_id | default(lookup('pipe', 'date +%Y%m%d-%H%M%S')) }}"
-        deployment_timestamp: "{{ ansible_date_time.iso8601 }}"
+        deployment_timestamp: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
         deployment_user: "{{ lookup('env', 'USER') }}"
       run_once: true
       delegate_to: localhost
+
+    - name: Set deployment start time
+      set_fact:
+        deployment_start_time: "{{ lookup('pipe', 'date +%s') }}"
+      run_once: true
 
     - name: Display deployment information
       debug:
@@ -76,7 +82,7 @@
 
 # === 5. Key Generation ===
 - name: Generate Mitum keys
-  import_playbook: keygen.yml
+  import_playbook: keygen-only.yml
   tags: [keygen, keys]
   when: not skip_keygen | default(false)
 
@@ -96,13 +102,13 @@
 
 # === 8. Backup Configuration ===
 - name: Configure backup
-  import_playbook: setup-backup.yml
+  import_playbook: backup.yml
   tags: [backup]
   when: mitum_backup_enabled | default(false)
 
 # === 9. Post-deployment Validation ===
 - name: Post-deployment validation
-  import_playbook: post-deploy-check.yml
+  import_playbook: validate.yml
   tags: [postcheck, validation]
 
 # === 10. Deployment Summary ===
@@ -125,7 +131,7 @@
           Mitum Deployment Complete!
           ========================================
           Deployment ID: {{ deployment_id }}
-          Duration: {{ (ansible_date_time.epoch | int) - (deployment_start_time | default(ansible_date_time.epoch) | int) }} seconds
+          Duration: {{ (lookup('pipe', 'date +%s') | int) - (deployment_start_time | int) }} seconds
           
           Nodes Deployed: {{ groups['mitum_nodes'] | length }}
           - Consensus: {{ groups['mitum_nodes'] | select('match', '.*consensus.*') | list | length }}

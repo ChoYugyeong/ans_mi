@@ -1,0 +1,83 @@
+---
+# Mitum Ansible Inventory
+# Generated: 2025-07-28 03:58:00 UTC
+# Environment: production
+# Nodes: 3
+# Method: manual
+
+all:
+  vars:
+    # SSH Multiplexing Configuration
+    ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=10m -o ControlPath=~/.ansible/cp/%h-%p-%r'
+    ansible_ssh_pipelining: true
+    
+  children:
+    bastion:
+      hosts:
+        bastion:
+          ansible_host: 3.34.138.191
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: /Users/user/Desktop/mitum-ansible-deploy/mitum-ansible/keys/ssh/production/bastion.pem
+          public_ip: 3.34.138.191
+          private_ip: 3.34.138.191
+
+    mitum_nodes:
+      hosts:
+        node0:
+          ansible_host: 192.168.50.88
+          mitum_node_id: 0
+          mitum_node_type: consensus
+          mitum_api_enabled: true
+          mitum_api_port: 54320
+          mitum_node_port: 4320
+          private_ip: 192.168.50.88
+        node1:
+          ansible_host: 192.168.50.89
+          mitum_node_id: 1
+          mitum_node_type: consensus
+          mitum_api_enabled: false
+          mitum_api_port: 54320
+          mitum_node_port: 4321
+          private_ip: 192.168.50.89
+        node2:
+          ansible_host: 192.168.50.90
+          mitum_node_id: 2
+          mitum_node_type: api
+          mitum_api_enabled: false
+          mitum_api_port: 54320
+          mitum_node_port: 4322
+          private_ip: 192.168.50.90
+
+      vars:
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: /Users/user/Desktop/mitum-ansible-deploy/mitum-ansible/keys/ssh/production/nodes.pem
+        ansible_ssh_common_args: '-o ProxyJump=bastion -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=~/.ansible/cp/%h-%p-%r'
+        
+        # Mitum configuration
+        mitum_network_id: "mitum"
+        mitum_model_type: "mitum-currency"
+        mitum_environment: "production"
+        
+        # Network settings
+        mitum_bind_host: "0.0.0.0"
+        mitum_advertise_host: "{{ private_ip }}"
+        
+        # Consensus settings
+        mitum_consensus_threshold: 100
+        mitum_interval_broadcast_ballot: "1.5s"
+        mitum_wait_broadcast_ballot: "5s"
+        mitum_interval_broadcast_proposal: "5s"
+        mitum_wait_broadcast_proposal: "10s"
+        mitum_interval_broadcast_accept: "1.5s"
+        mitum_wait_broadcast_accept: "5s"
+
+    monitoring:
+      hosts:
+        monitor:
+          ansible_host: 192.168.50.88
+          ansible_user: ubuntu
+          ansible_ssh_common_args: '-o ProxyJump=bastion -o ControlMaster=auto -o ControlPersist=10m'
+      vars:
+        prometheus_port: 9090
+        grafana_port: 3000
+        alertmanager_port: 9093

@@ -1,79 +1,111 @@
-# Generated Mitum Inventory for {{ environment }} Environment
-# Generated at: {{ ansible_date_time.iso8601 }}
-# Network ID: {{ network_id }}
-# Model: {{ model_type }}
-# Node Count: {{ node_count }}
+---
+# Mitum Ansible Inventory
+# Generated: {{ lookup('pipe', 'date -u +"%Y-%m-%dT%H:%M:%SZ"') }}
+# Environment: {{ mitum_environment }}
+# Nodes: {{ mitum_node_count }}
 
 all:
+  vars:
+    # SSH Multiplexing Configuration
+    ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=10m -o ControlPath=~/.ansible/cp/%h-%p-%r'
+    ansible_ssh_pipelining: true
+    
   children:
+    {% if mitum_bastion_ip %}
     bastion:
       hosts:
         bastion:
-          ansible_host: {{ bastion_ip }}
-          ansible_user: {{ username }}
-          ansible_ssh_private_key_file: keys/ssh/{{ environment }}/bastion.pem
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-    
+          ansible_host: {{ mitum_bastion_ip }}
+          ansible_user: {{ mitum_ssh_user }}
+          {% if mitum_bastion_key_path %}
+          ansible_ssh_private_key_file: "{{ mitum_bastion_key_path }}"
+          {% endif %}
+          public_ip: {{ mitum_bastion_ip }}
+          private_ip: {{ mitum_bastion_ip }}
+      vars:
+        # Lower disk space requirement for bastion host
+        min_disk_space_gb: 5
+    {% endif %}
+
     mitum_nodes:
       hosts:
-{% for ip in nodes %}
+        {% for node_ip in node_ips_list %}
         node{{ loop.index0 }}:
-          ansible_host: {{ ip }}
-          ansible_user: {{ username }}
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -W %h:%p -q {{ username }}@{{ bastion_ip }} -i keys/ssh/{{ environment }}/bastion.pem"'
-          ansible_ssh_private_key_file: keys/ssh/{{ environment }}/nodes.pem
+          ansible_host: {{ node_ip }}
           mitum_node_id: {{ loop.index0 }}
-          mitum_node_port: {{ 4320 + loop.index0 }}
-{% if loop.index0 < consensus_nodes %}
-          mitum_api_enabled: false
-          mitum_node_type: "consensus"
-{% else %}
+          {% if loop.index0 < (mitum_node_count | int - 1) %}
+          mitum_node_type: consensus
+          mitum_api_enabled: {{ 'true' if loop.index0 == 0 else 'false' }}
+          {% else %}
+          mitum_node_type: api
           mitum_api_enabled: true
+          {% endif %}
           mitum_api_port: 54320
-          mitum_node_type: "api"
-{% endif %}
-
-{% endfor %}
+          mitum_node_port: {{ 4320 + loop.index0 }}
+          private_ip: {{ node_ip }}
+        {% endfor %}
 
       vars:
-        mitum_network_id: "{{ network_id }}"
-        mitum_model_type: "{{ model_type }}"
-        mitum_environment: "{{ environment }}"
+        ansible_user: {{ mitum_ssh_user }}
+        {% if mitum_nodes_key_path %}
+        ansible_ssh_private_key_file: "{{ mitum_nodes_key_path }}"
+        {% endif %}
+        {% if mitum_bastion_ip %}
+        ansible_ssh_common_args: '-o ProxyJump=bastion -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=~/.ansible/cp/%h-%p-%r'
+        {% else %}
+        ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=10m -o ControlPath=~/.ansible/cp/%h-%p-%r'
+        {% endif %}
+        
+        # Mitum configuration
+        mitum_network_id: "{{ mitum_network_id }}"
+        mitum_model_type: "{{ mitum_model_type }}"
+        mitum_environment: "{{ mitum_environment }}"
+        
+        # Network settings
         mitum_bind_host: "0.0.0.0"
-        mitum_mongodb_replica_set: "mitum-rs"
-        mitum_mongodb_auth_enabled: true
-        mitum_consensus:
-          threshold: 67
-          interval_broadcast_ballot: "1.5s"
+        mitum_advertise_host: "{{ '{{' }} private_ip {{ '}}' }}"
         
-        # Performance settings
-        mitum_parallel_processes: 4
-        mitum_connection_timeout: 30
-        
-        # Security settings
-        mitum_firewall_enabled: true
-        mitum_ssh_port: 22
+        # Consensus settings
+        mitum_consensus_threshold: 100
+        mitum_interval_broadcast_ballot: "1.5s"
+        mitum_wait_broadcast_ballot: "5s"
+        mitum_interval_broadcast_proposal: "5s"
+        mitum_wait_broadcast_proposal: "10s"
+        mitum_interval_broadcast_accept: "1.5s"
+        mitum_wait_broadcast_accept: "5s"
 
+    {% if monitoring_enabled == 'yes' %}
     monitoring:
       hosts:
-        monitoring:
-          ansible_host: {{ bastion_ip }}
-          ansible_user: {{ username }}
-          ansible_ssh_private_key_file: keys/ssh/{{ environment }}/bastion.pem
-          
+        monitor:
+          ansible_host: {{ monitoring_ip if monitoring_ip else mitum_bastion_ip }}
+          ansible_user: {{ mitum_ssh_user }}
+      vars:
+        {% if monitoring_ip == mitum_bastion_ip and mitum_bastion_key_path %}
+        # Monitor runs on bastion, so use bastion key and lower disk req.
+        ansible_ssh_private_key_file: "{{ mitum_bastion_key_path }}"
+        min_disk_space_gb: 5
+        {% elif mitum_nodes_key_path %}
+        ansible_ssh_private_key_file: "{{ mitum_nodes_key_path }}"
+        {% endif %}
+        prometheus_port: 9090
+        grafana_port: 3000
+        alertmanager_port: 9093
+    {% endif %}
+
     mongodb:
       hosts:
-{% for ip in nodes[:3] %}
-        mongodb{{ loop.index0 }}:
-          ansible_host: {{ ip }}
-          ansible_user: {{ username }}
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -W %h:%p -q {{ username }}@{{ bastion_ip }} -i keys/ssh/{{ environment }}/bastion.pem"'
-          ansible_ssh_private_key_file: keys/ssh/{{ environment }}/nodes.pem
-          mongodb_replica_role: "{% if loop.index0 == 0 %}primary{% else %}secondary{% endif %}"
-
-{% endfor %}
-
+        {% for node_ip in node_ips_list %}
+        node{{ loop.index0 }}:
+          ansible_host: {{ node_ip }}
+        {% endfor %}
       vars:
-        mongodb_port: 27017
-        mongodb_replica_set: "mitum-rs"
-        mongodb_auth_enabled: true 
+        ansible_user: {{ mitum_ssh_user }}
+        {% if mitum_nodes_key_path %}
+        ansible_ssh_private_key_file: "{{ mitum_nodes_key_path }}"
+        {% endif %}
+        {% if mitum_bastion_ip %}
+        ansible_ssh_common_args: '-o ProxyJump=bastion -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=~/.ansible/cp/%h-%p-%r'
+        {% else %}
+        ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=10m -o ControlPath=~/.ansible/cp/%h-%p-%r'
+        {% endif %} 
